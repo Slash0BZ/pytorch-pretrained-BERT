@@ -31,6 +31,7 @@ import shutil
 import torch
 from torch import nn
 from torch.nn import CrossEntropyLoss
+from torch.nn import MSELoss
 
 from .file_utils import cached_path
 
@@ -416,6 +417,16 @@ class BertPreTrainingHeads(nn.Module):
         return prediction_scores, seq_relationship_score
 
 
+class BertNumericalHead(nn.Module):
+    def __init__(self, config):
+        super(BertNumericalHead, self).__init__()
+        self.predictions = nn.Linear(config.hidden_size, 1)
+
+    def forward(self, sequence_output):
+        prediction_score = self.predictions(sequence_output)
+        return prediction_score
+
+
 class PreTrainedBertModel(nn.Module):
     """ An abstract class to handle weights initialization and
         a simple interface for dowloading and loading pretrained models.
@@ -634,6 +645,38 @@ class BertModel(PreTrainedBertModel):
         if not output_all_encoded_layers:
             encoded_layers = encoded_layers[-1]
         return encoded_layers, pooled_output
+
+
+class BertForNumericalPreTraining(PreTrainedBertModel):
+
+    def __init__(self, config):
+        super(BertForNumericalPreTraining, self).__init__(config)
+        self.bert = BertModel(config)
+        self.cls = BertPreTrainingHeads(config, self.bert.embeddings.word_embeddings.weight)
+        self.nls = BertNumericalHead(config)
+        self.apply(self.init_bert_weights)
+
+    def forward(self, input_ids, token_type_ids=None, attention_mask=None, masked_lm_labels=None, next_sentence_label=None, float_labels=None):
+        sequence_output, pooled_output = self.bert(input_ids, token_type_ids, attention_mask,
+                                                   output_all_encoded_layers=False)
+        prediction_scores, seq_relationship_score = self.cls(sequence_output, pooled_output)
+        prediction_floats = self.nls(sequence_output)
+
+        if masked_lm_labels is not None and next_sentence_label is not None:
+            loss_fct = CrossEntropyLoss(ignore_index=-1)
+            masked_lm_loss = loss_fct(prediction_scores.view(-1, self.config.vocab_size), masked_lm_labels.view(-1))
+            next_sentence_loss = loss_fct(seq_relationship_score.view(-1, 2), next_sentence_label.view(-1))
+
+            # Only care non zeros
+            float_mask = torch.nonzero(float_labels)
+            float_loss_fct = MSELoss()
+            float_loss = float_loss_fct(prediction_floats[float_mask], float_labels[float_mask])
+            total_loss = masked_lm_loss + next_sentence_loss
+            if float_loss.data[0] > 0.0:
+                total_loss += float_loss
+            return total_loss
+        else:
+            return prediction_scores, seq_relationship_score
 
 
 class BertForPreTraining(PreTrainedBertModel):

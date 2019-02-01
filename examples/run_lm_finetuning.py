@@ -31,6 +31,7 @@ from torch.utils.data.distributed import DistributedSampler
 
 from pytorch_pretrained_bert.tokenization import BertTokenizer
 from pytorch_pretrained_bert.modeling import BertForPreTraining
+from pytorch_pretrained_bert.modeling import BertForNumericalPreTraining
 from pytorch_pretrained_bert.optimization import BertAdam
 
 from torch.utils.data import Dataset
@@ -143,7 +144,8 @@ class BERTDataset(Dataset):
                        torch.tensor(cur_features.input_mask),
                        torch.tensor(cur_features.segment_ids),
                        torch.tensor(cur_features.lm_label_ids),
-                       torch.tensor(cur_features.is_next))
+                       torch.tensor(cur_features.is_next),
+                       torch.tensor(cur_features.float_labels))
 
         return cur_tensors
 
@@ -265,12 +267,13 @@ class InputExample(object):
 class InputFeatures(object):
     """A single set of features of data."""
 
-    def __init__(self, input_ids, input_mask, segment_ids, is_next, lm_label_ids):
+    def __init__(self, input_ids, input_mask, segment_ids, is_next, lm_label_ids, float_labels):
         self.input_ids = input_ids
         self.input_mask = input_mask
         self.segment_ids = segment_ids
         self.is_next = is_next
         self.lm_label_ids = lm_label_ids
+        self.float_labels = float_labels
 
 
 def random_word(tokens, tokenizer):
@@ -370,6 +373,9 @@ def convert_example_to_features(example, max_seq_length, tokenizer):
 
     input_ids = tokenizer.convert_tokens_to_ids(tokens)
 
+    # Note: decide whether to mask or not
+    float_labels = tokenizer.convert_tokens_to_floats(tokens)
+
     # The mask has 1 for real tokens and 0 for padding tokens. Only real
     # tokens are attended to.
     input_mask = [1] * len(input_ids)
@@ -380,11 +386,13 @@ def convert_example_to_features(example, max_seq_length, tokenizer):
         input_mask.append(0)
         segment_ids.append(0)
         lm_label_ids.append(-1)
+        float_labels.append(0.0)
 
     assert len(input_ids) == max_seq_length
     assert len(input_mask) == max_seq_length
     assert len(segment_ids) == max_seq_length
     assert len(lm_label_ids) == max_seq_length
+    assert len(float_labels) == max_seq_length
 
     if example.guid < 5:
         logger.info("*** Example ***")
@@ -396,13 +404,15 @@ def convert_example_to_features(example, max_seq_length, tokenizer):
         logger.info(
                 "segment_ids: %s" % " ".join([str(x) for x in segment_ids]))
         logger.info("LM label: %s " % (lm_label_ids))
+        logger.info("Float label: %s " % (float_labels))
         logger.info("Is next sentence label: %s " % (example.is_next))
 
     features = InputFeatures(input_ids=input_ids,
                              input_mask=input_mask,
                              segment_ids=segment_ids,
                              lm_label_ids=lm_label_ids,
-                             is_next=example.is_next)
+                             is_next=example.is_next,
+                             float_labels=float_labels)
     return features
 
 
@@ -530,7 +540,7 @@ def main():
             len(train_dataset) / args.train_batch_size / args.gradient_accumulation_steps * args.num_train_epochs)
 
     # Prepare model
-    model = BertForPreTraining.from_pretrained(args.bert_model)
+    model = BertForNumericalPreTraining.from_pretrained(args.bert_model)
     if args.fp16:
         model.half()
     model.to(device)
@@ -593,8 +603,8 @@ def main():
             nb_tr_examples, nb_tr_steps = 0, 0
             for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration")):
                 batch = tuple(t.to(device) for t in batch)
-                input_ids, input_mask, segment_ids, lm_label_ids, is_next = batch
-                loss = model(input_ids, segment_ids, input_mask, lm_label_ids, is_next)
+                input_ids, input_mask, segment_ids, lm_label_ids, is_next, float_labels = batch
+                loss = model(input_ids, segment_ids, input_mask, lm_label_ids, is_next, float_labels)
                 if n_gpu > 1:
                     loss = loss.mean() # mean() to average on multi-gpu.
                 if args.gradient_accumulation_steps > 1:
@@ -645,5 +655,25 @@ def accuracy(out, labels):
     return np.sum(outputs == labels)
 
 
+def test_dataloader():
+    tokenizer = BertTokenizer.from_pretrained("bert-base-uncased", do_lower_case=True)
+    train_dataset = BERTDataset("../samples/gigaword_small.txt", tokenizer, seq_len=128,
+                                corpus_lines=None, on_memory=True)
+    train_sampler = RandomSampler(train_dataset)
+    train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=32)
+
+
+    for _ in trange(int(1), desc="Epoch"):
+        for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration")):
+            batch = tuple(t.to("cpu") for t in batch)
+            input_ids, input_mask, segment_ids, lm_label_ids, is_next, float_labels = batch
+
+
+def test_model():
+    model = BertForNumericalPreTraining.from_pretrained("bert-base-uncased")
+    model.to("cpu")
+
+
 if __name__ == "__main__":
-    main()
+    # main()
+    test_model()

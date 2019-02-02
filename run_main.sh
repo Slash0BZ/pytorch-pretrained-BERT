@@ -4,7 +4,7 @@ pip install --editable .
 python examples/run_lm_finetuning.py \
   --bert_model bert-base-uncased \
   --do_train \
-  --train_file samples/sample_text.txt \
+  --train_file samples/gigaword_big.txt \
   --output_dir models \
   --num_train_epochs 5.0 \
   --learning_rate 3e-5 \

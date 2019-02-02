@@ -303,6 +303,8 @@ def random_word(tokens, tokenizer):
 
             # append current token to output (we will predict these later)
             try:
+                if token.startswith("[NUM]"):
+                    token = "[NUM]"
                 output_label.append(tokenizer.vocab[token])
             except KeyError:
                 # For unknown words (should not occur with BPE vocab)
@@ -675,5 +677,5 @@ def test_model():
 
 
 if __name__ == "__main__":
-    # main()
-    test_model()
+    main()
+    # test_model()

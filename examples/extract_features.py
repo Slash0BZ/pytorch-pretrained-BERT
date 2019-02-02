@@ -30,6 +30,7 @@ from torch.utils.data.distributed import DistributedSampler
 
 from pytorch_pretrained_bert.tokenization import BertTokenizer
 from pytorch_pretrained_bert.modeling import BertModel
+from pytorch_pretrained_bert.modeling import BertForNumericalPreTraining
 
 logging.basicConfig(format = '%(asctime)s - %(levelname)s - %(name)s -   %(message)s', 
                     datefmt = '%m/%d/%Y %H:%M:%S',
@@ -225,9 +226,7 @@ def main():
         torch.distributed.init_process_group(backend='nccl')
     logger.info("device: {} n_gpu: {} distributed training: {}".format(device, n_gpu, bool(args.local_rank != -1)))
 
-    layer_indexes = [int(x) for x in args.layers.split(",")]
-
-    tokenizer = BertTokenizer.from_pretrained(args.bert_model, do_lower_case=args.do_lower_case)
+    tokenizer = BertTokenizer.from_pretrained("bert-base-uncased", do_lower_case=args.do_lower_case)
 
     examples = read_examples(args.input_file)
 
@@ -238,7 +237,7 @@ def main():
     for feature in features:
         unique_id_to_feature[feature.unique_id] = feature
 
-    model = BertModel.from_pretrained(args.bert_model)
+    model = BertForNumericalPreTraining.from_pretrained(args.bert_model)
     model.to(device)
 
     if args.local_rank != -1:
@@ -264,8 +263,7 @@ def main():
             input_ids = input_ids.to(device)
             input_mask = input_mask.to(device)
 
-            all_encoder_layers, _ = model(input_ids, token_type_ids=None, attention_mask=input_mask)
-            all_encoder_layers = all_encoder_layers
+            lm_scores, _, float_scores = model(input_ids, token_type_ids=None, attention_mask=input_mask)
 
             for b, example_index in enumerate(example_indices):
                 feature = features[example_index.item()]
@@ -275,19 +273,15 @@ def main():
                 output_json["linex_index"] = unique_id
                 all_out_features = []
                 for (i, token) in enumerate(feature.tokens):
-                    all_layers = []
-                    for (j, layer_index) in enumerate(layer_indexes):
-                        layer_output = all_encoder_layers[int(layer_index)].detach().cpu().numpy()
-                        layer_output = layer_output[b]
-                        layers = collections.OrderedDict()
-                        layers["index"] = layer_index
-                        layers["values"] = [
-                            round(x.item(), 6) for x in layer_output[i]
-                        ]
-                        all_layers.append(layers)
+                    lm_scores_item = lm_scores[b][i]
+                    predicted_float = float_scores[b][i]
+                    print(float_scores)
+                    lm_chosen = torch.argmax(lm_scores_item).item()
+                    predicted_token = tokenizer.ids_to_tokens[lm_chosen]
                     out_features = collections.OrderedDict()
                     out_features["token"] = token
-                    out_features["layers"] = all_layers
+                    out_features["predicted_token"] = predicted_token
+                    out_features["predicted_float"] = [round(x.item(), 2) for x in predicted_float.detach().cpu().numpy()]
                     all_out_features.append(out_features)
                 output_json["features"] = all_out_features
                 writer.write(json.dumps(output_json) + "\n")

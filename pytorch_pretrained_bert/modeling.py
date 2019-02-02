@@ -32,6 +32,7 @@ import torch
 from torch import nn
 from torch.nn import CrossEntropyLoss
 from torch.nn import MSELoss
+from torch.nn import L1Loss
 
 from .file_utils import cached_path
 
@@ -508,9 +509,12 @@ class PreTrainedBertModel(nn.Module):
             tempdir = tempfile.mkdtemp()
             logger.info("extracting archive file {} to temp dir {}".format(
                 resolved_archive_file, tempdir))
-            with tarfile.open(resolved_archive_file, 'r:gz') as archive:
-                archive.extractall(tempdir)
-            serialization_dir = tempdir
+            if resolved_archive_file.endswith("tar.gz"):
+                serialization_dir = pretrained_model_name
+            else:
+                with tarfile.open(resolved_archive_file, 'r:gz') as archive:
+                    archive.extractall(tempdir)
+                serialization_dir = tempdir
         # Load config
         config_file = os.path.join(serialization_dir, CONFIG_NAME)
         config = BertConfig.from_json_file(config_file)
@@ -660,24 +664,25 @@ class BertForNumericalPreTraining(PreTrainedBertModel):
         sequence_output, pooled_output = self.bert(input_ids, token_type_ids, attention_mask,
                                                    output_all_encoded_layers=False)
         prediction_scores, seq_relationship_score = self.cls(sequence_output, pooled_output)
-        prediction_floats = self.nls(sequence_output).view(-1, 1)
-        float_labels = float_labels.view(-1)
+        prediction_floats = self.nls(sequence_output)
+        print(prediction_floats)
 
         if masked_lm_labels is not None and next_sentence_label is not None:
+            float_labels = float_labels.view(-1)
             loss_fct = CrossEntropyLoss(ignore_index=-1)
             masked_lm_loss = loss_fct(prediction_scores.view(-1, self.config.vocab_size + 1), masked_lm_labels.view(-1))
             next_sentence_loss = loss_fct(seq_relationship_score.view(-1, 2), next_sentence_label.view(-1))
 
             # Only care non zeros
             float_mask = torch.nonzero(float_labels)
-            float_loss_fct = MSELoss()
-            float_loss = float_loss_fct(prediction_floats[float_mask], float_labels[float_mask])
+            float_loss_fct = L1Loss()
+            float_loss = float_loss_fct(prediction_floats.view(-1, 1)[float_mask], float_labels[float_mask])
             total_loss = masked_lm_loss + next_sentence_loss
             if float_loss.item() > 0.0:
                 total_loss += float_loss
             return total_loss
         else:
-            return prediction_scores, seq_relationship_score
+            return prediction_scores, seq_relationship_score, prediction_floats
 
 
 class BertForPreTraining(PreTrainedBertModel):

@@ -15,6 +15,7 @@ assert tokenized_text == ['who', 'was', 'jim', 'henson', '?', 'jim', '[MASK]', '
 
 # Convert token to vocabulary indices
 indexed_tokens = tokenizer.convert_tokens_to_ids(tokenized_text)
+print(indexed_tokens)
 # Define sentence A and B indices associated to 1st and 2nd sentences (see paper)
 segments_ids = [0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1]
 
@@ -23,16 +24,16 @@ tokens_tensor = torch.tensor([indexed_tokens])
 segments_tensors = torch.tensor([segments_ids])
 
 # Load pre-trained model (weights)
-model = BertModel.from_pretrained('bert-base-uncased')
-model.eval()
-
-# Predict hidden states features for each layer
-encoded_layers, _ = model(tokens_tensor, segments_tensors)
-# We have a hidden states for each of the 12 layers in model bert-base-uncased
-assert len(encoded_layers) == 12
+# model = BertModel.from_pretrained('bert-base-uncased')
+# model.eval()
+#
+# # Predict hidden states features for each layer
+# encoded_layers, _ = model(tokens_tensor, segments_tensors)
+# # We have a hidden states for each of the 12 layers in model bert-base-uncased
+# assert len(encoded_layers) == 12
 
 # Load pre-trained model (weights)
-model = BertForMaskedLM.from_pretrained('bert-base-uncased')
+model = BertForMaskedLM.from_pretrained('models/bert-base-uncased-num')
 model.eval()
 
 # Predict all tokens

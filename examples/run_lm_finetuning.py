@@ -304,7 +304,7 @@ def random_word(tokens, tokenizer):
             # append current token to output (we will predict these later)
             try:
                 if token.startswith("[NUM]"):
-                    token = "[NUM]"
+                    token = "[unused500]"
                 output_label.append(tokenizer.vocab[token])
             except KeyError:
                 # For unknown words (should not occur with BPE vocab)

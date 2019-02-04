@@ -288,6 +288,9 @@ def random_word(tokens, tokenizer):
     for i, token in enumerate(tokens):
         prob = random.random()
         # mask token with 15% probability
+        # [NUM] has 75% probability
+        if token.startswith("[NUM]"):
+            prob = random.uniform(0.0, 0.2)
         if prob < 0.15:
             prob /= 0.15
 

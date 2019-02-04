@@ -1,2 +1,4 @@
-i brushed my teeth for 2 minutes
-i went to work at 8 a.m.
+i brushed my teeth for [MASK] minutes.
+i brushed my teeth for 2 [MASK].
+i went to work at 8 [MASK].
+i went to [MASK] at 8 a.m.

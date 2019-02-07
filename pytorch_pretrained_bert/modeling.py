@@ -671,13 +671,13 @@ class BertForNumericalPreTraining(PreTrainedBertModel):
             float_labels = float_labels.view(-1)
             loss_fct = CrossEntropyLoss(ignore_index=-1)
             masked_lm_loss = loss_fct(prediction_scores.view(-1, self.config.vocab_size), masked_lm_labels.view(-1))
-            next_sentence_loss = loss_fct(seq_relationship_score.view(-1, 2), next_sentence_label.view(-1))
+            # next_sentence_loss = loss_fct(seq_relationship_score.view(-1, 2), next_sentence_label.view(-1))
 
             # Only care non zeros
             float_mask = torch.nonzero(float_labels)
-            float_loss_fct = L1Loss()
+            float_loss_fct = MSELoss()
             float_loss = float_loss_fct(prediction_floats.view(-1, 1)[float_mask], float_labels[float_mask])
-            total_loss = masked_lm_loss + next_sentence_loss
+            total_loss = masked_lm_loss
             if float_loss.item() > 0.0:
                 total_loss += float_loss
             return total_loss

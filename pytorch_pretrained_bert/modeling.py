@@ -680,6 +680,7 @@ class BertForNumericalPreTraining(PreTrainedBertModel):
             total_loss = masked_lm_loss
             if float_loss.item() > 0.0:
                 total_loss += float_loss
+                print("Float Loss: " + str(float_loss))
             return total_loss
         else:
             return prediction_scores, seq_relationship_score, prediction_floats

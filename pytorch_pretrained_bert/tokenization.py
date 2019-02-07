@@ -128,7 +128,7 @@ class BertTokenizer(object):
         basic_tokens = self.basic_tokenizer.tokenize(text)
         for idx, token in enumerate(basic_tokens):
             next_idx = min(idx + 1, len(basic_tokens) - 1)
-            if BertTokenizer.num(token) > 0.0 and basic_tokens[next_idx] in self.caring_units:
+            if BertTokenizer.num(token) != 0.0 and basic_tokens[next_idx] in self.caring_units:
                 split_tokens.append("[NUM]" + token)
                 continue
             for sub_token in self.wordpiece_tokenizer.tokenize(token):
@@ -269,7 +269,8 @@ class BasicTokenizer(object):
         output = []
         while i < len(chars):
             char = chars[i]
-            if _is_punctuation(char):
+            next_idx = min(len(chars) - 1, i + 1)
+            if _is_punctuation(char) and not chars[next_idx].isdigit():
                 output.append([char])
                 start_new_word = True
             else:
@@ -428,3 +429,4 @@ def _is_punctuation(char):
     if cat.startswith("P"):
         return True
     return False
+

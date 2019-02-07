@@ -167,9 +167,10 @@ class ParagraphConverter:
                         num_position = min_start
                 if value is not None:
                     mean, std = self.unit_vals[self.inverse_map[token]]
-                    value = round((value - mean) / std, 4)
-                    value = min(10.0, value)
-                    value = max(-10.0, value)
+                    max_value = mean + 10.0 * std
+                    value = min(max_value, value)
+                    value = max(value, 0.0)
+                    value = value / max_value
                     for i in range(0, idx - num_position):
                         modified_tokens.pop()
                     modified_tokens.append(str(value))
@@ -326,11 +327,15 @@ class UnitAnalyzer:
         for key in self.db:
             vals = np.array(self.db[key])
             out_map[key] = [np.mean(vals), np.std(vals)]
+            print(key)
+            print(out_map[key][0])
+            print(out_map[key][1])
+            print()
         with open(out_path, "wb") as of:
             pickle.dump(out_map, of)
 
 extractor = GigawordExtractor("/Users/xuanyuzhou/Downloads/tmp/2doc")
-extractor.output_to_file("samples/gigaword_big_normalized.txt")
+extractor.output_to_file("samples/gigaword_big_normalized_01.txt")
 
 # unit_extractor = GigawordUnitStat("/Users/xuanyuzhou/Downloads/tmp/2doc")
 # unit_extractor.run()

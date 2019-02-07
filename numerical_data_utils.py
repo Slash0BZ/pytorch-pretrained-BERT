@@ -177,7 +177,9 @@ class ParagraphConverter:
                     appended = True
             if not appended:
                 modified_tokens.append(token)
-        return ParagraphConverter.combine_timex(modified_tokens)
+        if modified_tokens == tokens:
+            return None
+        return modified_tokens
 
     def process_paragraph(self, paragraph):
         ret = []
@@ -186,6 +188,8 @@ class ParagraphConverter:
         sent_view = ta.get_view("SENTENCE")
         for sent in sent_view:
             processed_tokens = self.convert_sentence_with_unit(sent['tokens'].split())
+            if processed_tokens is None:
+                continue
             combined_str = ""
             for t in processed_tokens:
                 combined_str += t + " "

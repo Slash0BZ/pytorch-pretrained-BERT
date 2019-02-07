@@ -10,3 +10,4 @@ requests
 word2number
 cython
 ccg_nlpy
+scikit-learn

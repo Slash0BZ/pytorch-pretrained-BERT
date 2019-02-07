@@ -49,12 +49,13 @@ class InputExample(object):
 class InputFeatures(object):
     """A single set of features of data."""
 
-    def __init__(self, unique_id, tokens, input_ids, input_mask, input_type_ids):
+    def __init__(self, unique_id, tokens, input_ids, input_mask, input_type_ids, float_labels):
         self.unique_id = unique_id
         self.tokens = tokens
         self.input_ids = input_ids
         self.input_mask = input_mask
         self.input_type_ids = input_type_ids
+        self.float_labels = float_labels
 
 
 def convert_examples_to_features(examples, seq_length, tokenizer):
@@ -114,6 +115,7 @@ def convert_examples_to_features(examples, seq_length, tokenizer):
             input_type_ids.append(1)
 
         input_ids = tokenizer.convert_tokens_to_ids(tokens)
+        float_labels = tokenizer.convert_tokens_to_floats(tokens)
 
         # The mask has 1 for real tokens and 0 for padding tokens. Only real
         # tokens are attended to.
@@ -124,10 +126,12 @@ def convert_examples_to_features(examples, seq_length, tokenizer):
             input_ids.append(0)
             input_mask.append(0)
             input_type_ids.append(0)
+            float_labels.append(0.0)
 
         assert len(input_ids) == seq_length
         assert len(input_mask) == seq_length
         assert len(input_type_ids) == seq_length
+        assert len(float_labels) == seq_length
 
         if ex_index < 5:
             logger.info("*** Example ***")
@@ -144,7 +148,8 @@ def convert_examples_to_features(examples, seq_length, tokenizer):
                 tokens=tokens,
                 input_ids=input_ids,
                 input_mask=input_mask,
-                input_type_ids=input_type_ids))
+                input_type_ids=input_type_ids,
+                float_labels=float_labels))
     return features
 
 
@@ -248,9 +253,10 @@ def main():
 
     all_input_ids = torch.tensor([f.input_ids for f in features], dtype=torch.long)
     all_input_mask = torch.tensor([f.input_mask for f in features], dtype=torch.long)
+    all_float_labels = torch.tensor([f.float_labels for f in features], dtype=torch.float)
     all_example_index = torch.arange(all_input_ids.size(0), dtype=torch.long)
 
-    eval_data = TensorDataset(all_input_ids, all_input_mask, all_example_index)
+    eval_data = TensorDataset(all_input_ids, all_input_mask, all_example_index, all_float_labels)
     if args.local_rank == -1:
         eval_sampler = SequentialSampler(eval_data)
     else:
@@ -259,11 +265,12 @@ def main():
 
     model.eval()
     with open(args.output_file, "w", encoding='utf-8') as writer:
-        for input_ids, input_mask, example_indices in eval_dataloader:
+        for input_ids, input_mask, example_indices, float_labels in eval_dataloader:
             input_ids = input_ids.to(device)
             input_mask = input_mask.to(device)
+            float_labels = float_labels.to(device)
 
-            lm_scores, _, float_scores = model(input_ids, token_type_ids=None, attention_mask=input_mask)
+            lm_scores, _, float_scores = model(input_ids, token_type_ids=None, attention_mask=input_mask, float_labels=float_labels)
 
             for b, example_index in enumerate(example_indices):
                 feature = features[example_index.item()]

@@ -1,8 +1,11 @@
 import os
 import re
+import pickle
 
 from word2number import w2n
 from ccg_nlpy import local_pipeline
+from sklearn.preprocessing import normalize
+import numpy as np
 
 
 class ParagraphConverter:
@@ -28,13 +31,34 @@ class ParagraphConverter:
             "centuries": 100.0 * 365.0 * 24.0 * 60.0 * 60.0,
         }
 
+        self.inverse_map = {
+            "second": "second",
+            "seconds": "second",
+            "minute": "minute",
+            "minutes": "minute",
+            "hour": "hour",
+            "hours": "hour",
+            "day": "day",
+            "days": "day",
+            "week": "week",
+            "weeks": "week",
+            "month": "month",
+            "months": "month",
+            "year": "year",
+            "years": "year",
+            "century": "century",
+            "centuries": "century",
+        }
+        with open("unit_values.pkl", "rb") as f:
+            self.unit_vals = pickle.load(f)
+
     @staticmethod
     def num(s):
         try:
             return float(s)
         except:
             if s == 'a' or s == 'an':
-                return 1.0
+                return None
             if s == 'few':
                 return 3.0
             return None
@@ -142,6 +166,10 @@ class ParagraphConverter:
                         value = quantity
                         num_position = min_start
                 if value is not None:
+                    mean, std = self.unit_vals[self.inverse_map[token]]
+                    value = round((value - mean) / std, 4)
+                    value = min(10.0, value)
+                    value = max(-10.0, value)
                     for i in range(0, idx - num_position):
                         modified_tokens.pop()
                     modified_tokens.append(str(value))
@@ -211,6 +239,61 @@ class GigawordExtractor:
             f.write("\n")
 
 
+class GigawordUnitStat:
+
+    def __init__(self, path):
+        self.pipeline = local_pipeline.LocalPipeline()
+        self.unit_file = "./units.txt"
+        self.path = path
+        self.name_map = {}
+        self.inverse_name_map = {}
+        self.distribution_map = {}
+        self.read_units()
+
+    @staticmethod
+    def insert_map(m, k, v):
+        if k not in m:
+            m[k] = []
+        m[k].append(v)
+
+    def read_units(self):
+        f = open(self.unit_file)
+        lines = [x.strip() for x in f.readlines()]
+        for line in lines:
+            key = line.split(":")[0]
+            vals = line.split(":")[1].split("/")
+            for v in vals:
+                GigawordUnitStat.insert_map(self.name_map, key, v)
+                self.inverse_name_map[v] = key
+
+    def run(self):
+        for root, dirs, files in os.walk(self.path):
+            files.sort()
+            for file in files:
+                paragraphs = GigawordExtractor.read_file(self.path + '/' + file)
+                for p in paragraphs:
+                    try:
+                        self.process_paragraph(p)
+                    except Exception as e:
+                        print(e)
+
+    def process_paragraph(self, paragraph):
+        paragraph = paragraph.lower()
+        ta = self.pipeline.doc(paragraph)
+        sent_view = ta.get_view("SENTENCE")
+        for sent in sent_view:
+            tokens = sent['tokens'].split()
+            for idx, token in enumerate(tokens):
+                prev_token_idx = max(0, idx - 1)
+                prev_num = ParagraphConverter.num(tokens[prev_token_idx])
+                if token in self.inverse_name_map and prev_num is not None:
+                    self.insert_map(self.distribution_map, self.inverse_name_map[token], prev_num)
+
+    def save(self, path):
+        with open(path, "wb") as sf:
+            pickle.dump(self.distribution_map, sf)
+
+
 def pc_test():
     converter = ParagraphConverter()
     strs = [""] * 6
@@ -228,11 +311,28 @@ def pc_test():
     print(converter.process_paragraph(paragraph))
 
 
+class UnitAnalyzer:
+
+    def __init__(self, data_path):
+        with open(data_path, "rb") as df:
+            self.db = pickle.load(df)
+
+    def analyze(self, out_path):
+        out_map = {}
+        for key in self.db:
+            vals = np.array(self.db[key])
+            out_map[key] = [np.mean(vals), np.std(vals)]
+        with open(out_path, "wb") as of:
+            pickle.dump(out_map, of)
+
 extractor = GigawordExtractor("/Users/xuanyuzhou/Downloads/tmp/2doc")
-extractor.output_to_file("samples/gigaword_big.txt")
+extractor.output_to_file("samples/gigaword_big_normalized.txt")
 
+# unit_extractor = GigawordUnitStat("/Users/xuanyuzhou/Downloads/tmp/2doc")
+# unit_extractor.run()
+# unit_extractor.save("unit_output_no_one.pkl")
 
-
-
+# analyzer = UnitAnalyzer("./unit_output.pkl")
+# analyzer.analyze("./unit_values.pkl")
 
 

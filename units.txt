@@ -1,0 +1,8 @@
+second:second/seconds/sec/secs
+minute:minute/minutes/min/mins
+hour:hour/hours/hr/hrs
+day:day/days
+week:week/weeks/wk/wks
+month:month/months/mo/mos
+year:year/years/yr/yrs
+century:century/centuries

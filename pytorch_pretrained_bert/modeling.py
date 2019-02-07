@@ -171,21 +171,23 @@ except ImportError:
             x = (x - u) / torch.sqrt(s + self.variance_epsilon)
             return self.weight * x + self.bias
 
+
 class BertEmbeddings(nn.Module):
     """Construct the embeddings from word, position and token_type embeddings.
     """
     def __init__(self, config):
         super(BertEmbeddings, self).__init__()
-        self.word_embeddings = nn.Embedding(config.vocab_size, config.hidden_size)
-        self.position_embeddings = nn.Embedding(config.max_position_embeddings, config.hidden_size)
-        self.token_type_embeddings = nn.Embedding(config.type_vocab_size, config.hidden_size)
+        self.word_embeddings = nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=0)
+        self.position_embeddings = nn.Embedding(config.max_position_embeddings, config.hidden_size, padding_idx=0)
+        self.token_type_embeddings = nn.Embedding(config.type_vocab_size, config.hidden_size, padding_idx=0)
+        self.float_embeddings = BertNumericalEmbedding(config.hidden_size)
 
         # self.LayerNorm is not snake-cased to stick with TensorFlow model variable name and be able to load
         # any TensorFlow checkpoint file
         self.LayerNorm = BertLayerNorm(config.hidden_size, eps=1e-12)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
-    def forward(self, input_ids, token_type_ids=None):
+    def forward(self, input_ids, token_type_ids=None, float_values=None):
         seq_length = input_ids.size(1)
         position_ids = torch.arange(seq_length, dtype=torch.long, device=input_ids.device)
         position_ids = position_ids.unsqueeze(0).expand_as(input_ids)
@@ -195,8 +197,9 @@ class BertEmbeddings(nn.Module):
         words_embeddings = self.word_embeddings(input_ids)
         position_embeddings = self.position_embeddings(position_ids)
         token_type_embeddings = self.token_type_embeddings(token_type_ids)
+        float_embeddings = self.float_embeddings(float_values)
 
-        embeddings = words_embeddings + position_embeddings + token_type_embeddings
+        embeddings = words_embeddings + position_embeddings + token_type_embeddings + float_embeddings
         embeddings = self.LayerNorm(embeddings)
         embeddings = self.dropout(embeddings)
         return embeddings
@@ -428,6 +431,18 @@ class BertNumericalHead(nn.Module):
         return prediction_score
 
 
+class BertNumericalEmbedding(nn.Module):
+    def __init__(self, hidden_size):
+        super(BertNumericalEmbedding, self).__init__()
+        self.hidden_size = hidden_size
+
+    def forward(self, val):
+        ret = torch.zeros(val.size(0), val.size(1), self.hidden_size - 1, device=val.device)
+        val = torch.unsqueeze(val, dim=2)
+        ret = torch.cat((ret, val), 2)
+        return ret
+
+
 class PreTrainedBertModel(nn.Module):
     """ An abstract class to handle weights initialization and
         a simple interface for dowloading and loading pretrained models.
@@ -619,7 +634,7 @@ class BertModel(PreTrainedBertModel):
         self.pooler = BertPooler(config)
         self.apply(self.init_bert_weights)
 
-    def forward(self, input_ids, token_type_ids=None, attention_mask=None, output_all_encoded_layers=True):
+    def forward(self, input_ids, token_type_ids=None, attention_mask=None, output_all_encoded_layers=True, float_labels=None):
         if attention_mask is None:
             attention_mask = torch.ones_like(input_ids)
         if token_type_ids is None:
@@ -640,7 +655,7 @@ class BertModel(PreTrainedBertModel):
         extended_attention_mask = extended_attention_mask.to(dtype=next(self.parameters()).dtype) # fp16 compatibility
         extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
 
-        embedding_output = self.embeddings(input_ids, token_type_ids)
+        embedding_output = self.embeddings(input_ids, token_type_ids, float_labels)
         encoded_layers = self.encoder(embedding_output,
                                       extended_attention_mask,
                                       output_all_encoded_layers=output_all_encoded_layers)
@@ -662,10 +677,10 @@ class BertForNumericalPreTraining(PreTrainedBertModel):
 
     def forward(self, input_ids, token_type_ids=None, attention_mask=None, masked_lm_labels=None, next_sentence_label=None, float_labels=None):
         sequence_output, pooled_output = self.bert(input_ids, token_type_ids, attention_mask,
-                                                   output_all_encoded_layers=False)
+                                                   output_all_encoded_layers=False, float_labels=float_labels)
         prediction_scores, seq_relationship_score = self.cls(sequence_output, pooled_output)
         prediction_floats = self.nls(sequence_output)
-        print(prediction_floats)
+        # print(prediction_floats)
 
         if masked_lm_labels is not None and next_sentence_label is not None:
             float_labels = float_labels.view(-1)
@@ -674,12 +689,14 @@ class BertForNumericalPreTraining(PreTrainedBertModel):
             next_sentence_loss = loss_fct(seq_relationship_score.view(-1, 2), next_sentence_label.view(-1))
 
             # Only care non zeros
-            float_mask = torch.nonzero(float_labels)
+            # float_mask = torch.nonzero(float_labels)
+            float_mask = torch.nonzero(masked_lm_labels.view(-1) != -1)
             float_loss_fct = L1Loss()
             float_loss = float_loss_fct(prediction_floats.view(-1, 1)[float_mask], float_labels[float_mask])
             total_loss = masked_lm_loss + next_sentence_loss
             if float_loss.item() > 0.0:
                 total_loss += float_loss
+                print("Float Loss: " + str(float_loss.item()))
             return total_loss
         else:
             return prediction_scores, seq_relationship_score, prediction_floats

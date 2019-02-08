@@ -105,7 +105,8 @@ class BertTokenizer(object):
             "years",
             "century",
             "centuries",
-            "apples"
+            "apple",
+            "orange"
         ]
 
     @staticmethod
@@ -153,10 +154,11 @@ class BertTokenizer(object):
             )
         return ids
 
-    def convert_tokens_to_floats(self, tokens):
+    def convert_tokens_to_floats(self, original_tokens, lm_label_ids):
+        assert(len(original_tokens) == len(lm_label_ids))
         floats = []
-        for token in tokens:
-            if token.startswith("[NUM]"):
+        for idx, token in enumerate(original_tokens):
+            if token.startswith("[NUM]") and lm_label_ids[idx] != -1:
                 floats.append(BertTokenizer.num(token[5:]))
             else:
                 floats.append(0.0)

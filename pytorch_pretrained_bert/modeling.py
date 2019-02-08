@@ -675,15 +675,21 @@ class BertForNumericalPreTraining(PreTrainedBertModel):
             # Only care non zeros
             float_mask = torch.nonzero(float_labels)
             float_loss_fct = MSELoss()
+            # float_loss_fct = L1Loss()
             float_loss = float_loss_fct(prediction_floats.view(-1, 1)[float_mask], float_labels[float_mask])
-            print(float_labels[float_mask])
+            # float_loss = float_loss_fct(prediction_floats.view(-1, 1), float_labels)
             if self.training:
-                total_loss = masked_lm_loss
-                if float_loss.item() > 0.0:
-                    total_loss += float_loss
-            else:
                 total_loss = float_loss
-            return total_loss
+                # total_loss = masked_lm_loss
+                # if float_loss.item() > 0.0:
+                #     total_loss += float_loss
+            else:
+                print(float_labels[float_mask])
+                print(prediction_floats.view(-1, 1)[float_mask])
+                print(float_loss.item())
+                print()
+                total_loss = float_loss
+            return total_loss, float_loss
         else:
             return prediction_scores, seq_relationship_score, prediction_floats
 

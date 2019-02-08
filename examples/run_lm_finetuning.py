@@ -32,6 +32,7 @@ from torch.utils.data.distributed import DistributedSampler
 from pytorch_pretrained_bert.tokenization import BertTokenizer
 from pytorch_pretrained_bert.modeling import BertForPreTraining
 from pytorch_pretrained_bert.modeling import BertForNumericalPreTraining
+from pytorch_pretrained_bert.modeling import BertPreTrainingHeads
 from pytorch_pretrained_bert.optimization import BertAdam
 
 from torch.utils.data import Dataset
@@ -449,6 +450,9 @@ def main():
     parser.add_argument("--do_train",
                         action='store_true',
                         help="Whether to run training.")
+    parser.add_argument("--do_eval",
+                        action='store_true',
+                        help="Whether to run evaluation.")
     parser.add_argument("--train_batch_size",
                         default=32,
                         type=int,
@@ -546,6 +550,8 @@ def main():
 
     # Prepare model
     model = BertForNumericalPreTraining.from_pretrained(args.bert_model)
+    model.cls = BertPreTrainingHeads(model.config, model.bert.embeddings.word_embeddings.weight)
+    model.apply(model.init_bert_weights)
     if args.fp16:
         model.half()
     model.to(device)
@@ -636,6 +642,25 @@ def main():
         output_model_file = os.path.join(args.output_dir, "pytorch_model.bin")
         if args.do_train:
             torch.save(model_to_save.state_dict(), output_model_file)
+
+    if args.do_eval:
+        train_dataset = BERTDataset(args.train_file, tokenizer, seq_len=args.max_seq_length,
+                                    corpus_lines=None, on_memory=args.on_memory)
+        if args.local_rank == -1:
+            eval_sampler = RandomSampler(train_dataset)
+        else:
+            eval_sampler = DistributedSampler(train_dataset)
+        eval_dataloader = DataLoader(train_dataset, sampler=eval_sampler, batch_size=args.train_batch_size)
+        model.eval()
+        total_loss = 0.0
+        for step, batch in enumerate(tqdm(eval_dataloader, desc="Iteration")):
+            batch = tuple(t.to(device) for t in batch)
+            input_ids, input_mask, segment_ids, lm_label_ids, is_next, float_labels = batch
+            loss = model(input_ids, segment_ids, input_mask, lm_label_ids, is_next, float_labels)
+            if n_gpu > 1:
+                loss = loss.mean() # mean() to average on multi-gpu.
+            total_loss += loss.item()
+        print("Eval total float loss: " + str(total_loss))
 
 
 def _truncate_seq_pair(tokens_a, tokens_b, max_length):

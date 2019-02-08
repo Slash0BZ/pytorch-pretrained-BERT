@@ -104,7 +104,8 @@ class BertTokenizer(object):
             "year",
             "years",
             "century",
-            "centuries"
+            "centuries",
+            "apples"
         ]
 
     @staticmethod

@@ -333,12 +333,12 @@ def convert_example_to_features(example, max_seq_length, tokenizer):
     """
     tokens_a = example.tokens_a
     tokens_b = example.tokens_b
-    tokens_a_orig = copy.deepcopy(tokens_a)
-    tokens_b_orig = copy.deepcopy(tokens_b)
     # Modifies `tokens_a` and `tokens_b` in place so that the total
     # length is less than the specified length.
     # Account for [CLS], [SEP], [SEP] with "- 3"
     _truncate_seq_pair(tokens_a, tokens_b, max_seq_length - 3)
+    tokens_a_orig = copy.deepcopy(tokens_a)
+    tokens_b_orig = copy.deepcopy(tokens_b)
 
     t1_random, t1_label = random_word(tokens_a, tokenizer)
     t2_random, t2_label = random_word(tokens_b, tokenizer)

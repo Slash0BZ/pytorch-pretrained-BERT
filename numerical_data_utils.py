@@ -187,6 +187,15 @@ class GigawordExtractor:
         content = ' '.join(line.strip() for line in lines)
         return re.findall(r'<P>(.+?)</P>', content)
 
+    def direct_output(self, file_name):
+        fout = open(file_name, "w")
+        for root, dirs, files in os.walk(self.path):
+            files.sort()
+            for file in files:
+                paragraphs = GigawordExtractor.read_file(self.path + '/' + file)
+                for p in paragraphs:
+                    fout.write(p + "\n")
+
     def run(self):
         for root, dirs, files in os.walk(self.path):
             files.sort()
@@ -228,8 +237,9 @@ def pc_test():
     print(converter.process_paragraph(paragraph))
 
 
-extractor = GigawordExtractor("/Users/xuanyuzhou/Downloads/tmp/2doc")
-extractor.output_to_file("samples/gigaword_big.txt")
+extractor = GigawordExtractor("/Users/xuanyuzhou/Downloads/tmp/afp_eng")
+#extractor.output_to_file("samples/gigaword_big.txt")
+extractor.direct_output("samples/raw_file_afp_eng.txt")
 
 
 

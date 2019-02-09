@@ -1,10 +1,49 @@
-dan has 0.1 apples.
-ben has 0.2 apples.
-amanda has 0.3 apples.
-stephen has 0.4 apples.
-bert has 0.5 apples.
-josh has 0.6 apples.
-yao has 0.7 apples.
-obama has 0.8 apples.
-lebron has 0.9 apples.
-kobe has 1.0 apples.
+dan has 0.1 apple.
+dan has 0.1 apple.
+dan has 0.1 apple.
+dan has 0.1 apple.
+
+ben has 0.2 apple.
+ben has 0.2 apple.
+ben has 0.2 apple.
+ben has 0.2 apple.
+
+amanda has 0.3 apple.
+amanda has 0.3 apple.
+amanda has 0.3 apple.
+amanda has 0.3 apple.
+
+stephen has 0.4 apple.
+stephen has 0.4 apple.
+stephen has 0.4 apple.
+stephen has 0.4 apple.
+
+bert has 0.5 apple.
+bert has 0.5 apple.
+bert has 0.5 apple.
+bert has 0.5 apple.
+
+josh has 0.6 apple.
+josh has 0.6 apple.
+josh has 0.6 apple.
+josh has 0.6 apple.
+
+yao has 0.7 apple.
+yao has 0.7 apple.
+yao has 0.7 apple.
+yao has 0.7 apple.
+
+obama has 0.8 apple.
+obama has 0.8 apple.
+obama has 0.8 apple.
+obama has 0.8 apple.
+
+lebron has 0.9 apple.
+lebron has 0.9 apple.
+lebron has 0.9 apple.
+lebron has 0.9 apple.
+
+kobe has 1.0 apple.
+kobe has 1.0 apple.
+kobe has 1.0 apple.
+kobe has 1.0 apple.

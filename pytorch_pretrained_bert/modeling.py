@@ -421,10 +421,18 @@ class BertPreTrainingHeads(nn.Module):
 class BertNumericalHead(nn.Module):
     def __init__(self, config):
         super(BertNumericalHead, self).__init__()
-        self.predictions = nn.Linear(config.hidden_size, 1)
+        self.Layer1 = nn.Linear(config.hidden_size, 128)
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+        self.LayerNorm = BertLayerNorm(config.hidden_size, eps=1e-12)
+        self.ActFn = gelu
+        self.Layer2 = nn.Linear(128, 1)
 
     def forward(self, sequence_output):
-        prediction_score = self.predictions(sequence_output)
+        hidden_state = self.Layer1(sequence_output)
+        # hidden_state = self.dropout(hidden_state)
+        # hidden_state = self.LayerNorm(hidden_state)
+        hidden_state = self.ActFn(hidden_state)
+        prediction_score = self.Layer2(hidden_state)
         return prediction_score
 
 
@@ -679,10 +687,10 @@ class BertForNumericalPreTraining(PreTrainedBertModel):
             float_loss = float_loss_fct(prediction_floats.view(-1, 1)[float_mask], float_labels[float_mask])
             # float_loss = float_loss_fct(prediction_floats.view(-1, 1), float_labels)
             if self.training:
-                total_loss = float_loss
-                # total_loss = masked_lm_loss
-                # if float_loss.item() > 0.0:
-                #     total_loss += float_loss
+                # total_loss = float_loss
+                total_loss = masked_lm_loss
+                if float_loss.item() > 0.0:
+                    total_loss += float_loss
             else:
                 print(float_labels[float_mask])
                 print(prediction_floats.view(-1, 1)[float_mask])

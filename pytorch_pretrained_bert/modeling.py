@@ -202,6 +202,7 @@ class BertEmbeddings(nn.Module):
         embeddings = words_embeddings + position_embeddings + token_type_embeddings + float_embeddings
         embeddings = self.LayerNorm(embeddings)
         embeddings = self.dropout(embeddings)
+        # embeddings = embeddings + float_embeddings
         return embeddings
 
 
@@ -444,7 +445,9 @@ class BertNumericalEmbedding(nn.Module):
         ret = torch.zeros(val.size(0), val.size(1), self.hidden_size - 1, device=val.device)
         val = torch.unsqueeze(val, dim=2)
         ret = torch.cat((ret, val), 2)
+        val = val.expand(val.size(0), val.size(1), self.hidden_size)
         return ret
+        # return val
 
 
 class PreTrainedBertModel(nn.Module):
@@ -638,7 +641,8 @@ class BertModel(PreTrainedBertModel):
         self.pooler = BertPooler(config)
         self.apply(self.init_bert_weights)
 
-    def forward(self, input_ids, token_type_ids=None, attention_mask=None, output_all_encoded_layers=True, float_labels=None):
+    def forward(self, input_ids, token_type_ids=None, attention_mask=None, output_all_encoded_layers=True,
+                float_labels=None, float_inputs=None):
         if attention_mask is None:
             attention_mask = torch.ones_like(input_ids)
         if token_type_ids is None:
@@ -659,7 +663,7 @@ class BertModel(PreTrainedBertModel):
         extended_attention_mask = extended_attention_mask.to(dtype=next(self.parameters()).dtype) # fp16 compatibility
         extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
 
-        embedding_output = self.embeddings(input_ids, token_type_ids, float_labels)
+        embedding_output = self.embeddings(input_ids, token_type_ids, float_inputs)
         encoded_layers = self.encoder(embedding_output,
                                       extended_attention_mask,
                                       output_all_encoded_layers=output_all_encoded_layers)
@@ -679,9 +683,12 @@ class BertForNumericalPreTraining(PreTrainedBertModel):
         self.nls = BertNumericalHead(config)
         self.apply(self.init_bert_weights)
 
-    def forward(self, input_ids, token_type_ids=None, attention_mask=None, masked_lm_labels=None, next_sentence_label=None, float_labels=None):
+    def forward(self, input_ids, token_type_ids=None, attention_mask=None, masked_lm_labels=None,
+                next_sentence_label=None, float_labels=None, float_inputs=None):
         sequence_output, pooled_output = self.bert(input_ids, token_type_ids, attention_mask,
-                                                   output_all_encoded_layers=False, float_labels=float_labels)
+                                                   output_all_encoded_layers=False,
+                                                   float_labels=float_labels,
+                                                   float_inputs=float_inputs)
         prediction_scores, seq_relationship_score = self.cls(sequence_output, pooled_output)
         prediction_floats = self.nls(sequence_output)
 
@@ -691,9 +698,10 @@ class BertForNumericalPreTraining(PreTrainedBertModel):
             masked_lm_loss = loss_fct(prediction_scores.view(-1, self.config.vocab_size), masked_lm_labels.view(-1))
 
             # Only care non zeros
-            # float_mask = torch.nonzero(float_labels)
-            float_mask = torch.nonzero(masked_lm_labels.view(-1) != -1)
+            float_mask = torch.nonzero(float_labels)
+            # float_mask = torch.nonzero(masked_lm_labels.view(-1) != -1)
             float_loss_fct = MSELoss()
+            # float_loss_fct = L1Loss()
             float_loss = float_loss_fct(prediction_floats.view(-1, 1)[float_mask], float_labels[float_mask])
             if self.training:
                 total_loss = masked_lm_loss

@@ -147,7 +147,8 @@ class BERTDataset(Dataset):
                        torch.tensor(cur_features.segment_ids),
                        torch.tensor(cur_features.lm_label_ids),
                        torch.tensor(cur_features.is_next),
-                       torch.tensor(cur_features.float_labels))
+                       torch.tensor(cur_features.float_labels),
+                       torch.tensor(cur_features.float_inputs))
 
         return cur_tensors
 
@@ -269,13 +270,14 @@ class InputExample(object):
 class InputFeatures(object):
     """A single set of features of data."""
 
-    def __init__(self, input_ids, input_mask, segment_ids, is_next, lm_label_ids, float_labels):
+    def __init__(self, input_ids, input_mask, segment_ids, is_next, lm_label_ids, float_labels, float_inputs):
         self.input_ids = input_ids
         self.input_mask = input_mask
         self.segment_ids = segment_ids
         self.is_next = is_next
         self.lm_label_ids = lm_label_ids
         self.float_labels = float_labels
+        self.float_inputs = float_inputs
 
 
 def random_word(tokens, tokenizer):
@@ -292,7 +294,8 @@ def random_word(tokens, tokenizer):
         # mask token with 15% probability
         # [NUM] has 75% probability
         if token.startswith("[NUM]"):
-            prob = random.uniform(0.0, 0.20)
+            # prob = 1.0
+            prob = random.uniform(0.0, 1.0)
         if prob < 0.15:
             prob /= 0.15
 
@@ -391,7 +394,7 @@ def convert_example_to_features(example, max_seq_length, tokenizer):
     input_ids = tokenizer.convert_tokens_to_ids(tokens)
 
     # Note: decide whether to mask or not
-    float_labels = tokenizer.convert_tokens_to_floats(tokens_orig, lm_label_ids)
+    float_labels, float_inputs = tokenizer.convert_tokens_to_floats(tokens_orig, lm_label_ids)
 
     # The mask has 1 for real tokens and 0 for padding tokens. Only real
     # tokens are attended to.
@@ -404,12 +407,14 @@ def convert_example_to_features(example, max_seq_length, tokenizer):
         segment_ids.append(0)
         lm_label_ids.append(-1)
         float_labels.append(0.0)
+        float_inputs.append(0.0)
 
     assert len(input_ids) == max_seq_length
     assert len(input_mask) == max_seq_length
     assert len(segment_ids) == max_seq_length
     assert len(lm_label_ids) == max_seq_length
     assert len(float_labels) == max_seq_length
+    assert len(float_inputs) == max_seq_length
     # print(tokens_orig)
     # print(tokens)
     # print(input_ids)
@@ -435,7 +440,8 @@ def convert_example_to_features(example, max_seq_length, tokenizer):
                              segment_ids=segment_ids,
                              lm_label_ids=lm_label_ids,
                              is_next=example.is_next,
-                             float_labels=float_labels)
+                             float_labels=float_labels,
+                             float_inputs=float_inputs)
     return features
 
 
@@ -635,8 +641,8 @@ def main():
             nb_tr_examples, nb_tr_steps = 0, 0
             for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration")):
                 batch = tuple(t.to(device) for t in batch)
-                input_ids, input_mask, segment_ids, lm_label_ids, is_next, float_labels = batch
-                loss, float_loss = model(input_ids, segment_ids, input_mask, lm_label_ids, is_next, float_labels)
+                input_ids, input_mask, segment_ids, lm_label_ids, is_next, float_labels, float_inputs = batch
+                loss, float_loss = model(input_ids, segment_ids, input_mask, lm_label_ids, is_next, float_labels, float_inputs)
                 if n_gpu > 1:
                     loss = loss.mean() # mean() to average on multi-gpu.
                     float_loss = float_loss.mean()

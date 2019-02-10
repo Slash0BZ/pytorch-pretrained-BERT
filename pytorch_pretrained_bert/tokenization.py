@@ -106,7 +106,11 @@ class BertTokenizer(object):
             "century",
             "centuries",
             "apple",
-            "orange"
+            "orange",
+            "a.",
+            "a.m",
+            "a.m.",
+            "am"
         ]
 
     # Unused
@@ -152,21 +156,37 @@ class BertTokenizer(object):
             )
         return ids
 
-    def convert_tokens_to_floats(self, original_tokens, lm_label_ids):
-        assert(len(original_tokens) == len(lm_label_ids))
+    def convert_tokens_to_floats(self, original_tokens, lm_label_ids=None):
+        if lm_label_ids is not None:
+            assert(len(original_tokens) == len(lm_label_ids))
         floats = []
+        floats_nonmask = []
         for idx, token in enumerate(original_tokens):
-            if token.startswith("[NUM]") and lm_label_ids[idx] != -1:
-                floats.append(BertTokenizer.num(token[5:]))
+            if lm_label_ids is not None:
+                # Get the floats of non-masked tokens
+                if token.startswith("[NUM]") and lm_label_ids[idx] == -1:
+                    floats_nonmask.append(BertTokenizer.num(token[5:]))
+                else:
+                    floats_nonmask.append(0.0)
+
+                if token.startswith("[NUM]") and lm_label_ids[idx] != -1:
+                    floats.append(BertTokenizer.num(token[5:]))
+                else:
+                    floats.append(0.0)
             else:
-                floats.append(0.0)
+                if token.startswith("[NUM]"):
+                    floats_nonmask.append(BertTokenizer.num(token[5:]))
+                    floats.append(BertTokenizer.num(token[5:]))
+                else:
+                    floats_nonmask.append(0.0)
+                    floats.append(0.0)
         if len(floats) > self.max_len:
             raise ValueError(
                 "Token indices sequence length is longer than the specified maximum "
                 " sequence length for this BERT model ({} > {}). Running this"
                 " sequence through BERT will result in indexing errors".format(len(floats), self.max_len)
             )
-        return floats
+        return floats, floats_nonmask
 
     def convert_ids_to_tokens(self, ids):
         """Converts a sequence of ids in wordpiece tokens using the vocab."""

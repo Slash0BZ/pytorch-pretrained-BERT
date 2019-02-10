@@ -20,6 +20,7 @@ from __future__ import division
 from __future__ import print_function
 
 import os
+import copy
 import logging
 import argparse
 from tqdm import tqdm, trange
@@ -32,6 +33,7 @@ from torch.utils.data.distributed import DistributedSampler
 from pytorch_pretrained_bert.tokenization import BertTokenizer
 from pytorch_pretrained_bert.modeling import BertForPreTraining
 from pytorch_pretrained_bert.modeling import BertForNumericalPreTraining
+from pytorch_pretrained_bert.modeling import BertPreTrainingHeads
 from pytorch_pretrained_bert.optimization import BertAdam
 
 from torch.utils.data import Dataset
@@ -290,7 +292,7 @@ def random_word(tokens, tokenizer):
         # mask token with 15% probability
         # [NUM] has 75% probability
         if token.startswith("[NUM]"):
-            prob = random.uniform(0.0, 0.2)
+            prob = random.uniform(0.0, 0.20)
         if prob < 0.15:
             prob /= 0.15
 
@@ -335,6 +337,8 @@ def convert_example_to_features(example, max_seq_length, tokenizer):
     # length is less than the specified length.
     # Account for [CLS], [SEP], [SEP] with "- 3"
     _truncate_seq_pair(tokens_a, tokens_b, max_seq_length - 3)
+    tokens_a_orig = copy.deepcopy(tokens_a)
+    tokens_b_orig = copy.deepcopy(tokens_b)
 
     t1_random, t1_label = random_word(tokens_a, tokenizer)
     t2_random, t2_label = random_word(tokens_b, tokenizer)
@@ -360,26 +364,34 @@ def convert_example_to_features(example, max_seq_length, tokenizer):
     # used as as the "sentence vector". Note that this only makes sense because
     # the entire model is fine-tuned.
     tokens = []
+    tokens_orig = []
     segment_ids = []
     tokens.append("[CLS]")
+    tokens_orig.append("[CLS]")
     segment_ids.append(0)
     for token in tokens_a:
         tokens.append(token)
         segment_ids.append(0)
+    for token in tokens_a_orig:
+        tokens_orig.append(token)
     tokens.append("[SEP]")
+    tokens_orig.append("[SEP]")
     segment_ids.append(0)
 
     assert len(tokens_b) > 0
     for token in tokens_b:
         tokens.append(token)
         segment_ids.append(1)
+    for token in tokens_b_orig:
+        tokens_orig.append(token)
     tokens.append("[SEP]")
+    tokens_orig.append("[SEP]")
     segment_ids.append(1)
 
     input_ids = tokenizer.convert_tokens_to_ids(tokens)
 
     # Note: decide whether to mask or not
-    float_labels = tokenizer.convert_tokens_to_floats(tokens)
+    float_labels = tokenizer.convert_tokens_to_floats(tokens_orig, lm_label_ids)
 
     # The mask has 1 for real tokens and 0 for padding tokens. Only real
     # tokens are attended to.
@@ -398,6 +410,12 @@ def convert_example_to_features(example, max_seq_length, tokenizer):
     assert len(segment_ids) == max_seq_length
     assert len(lm_label_ids) == max_seq_length
     assert len(float_labels) == max_seq_length
+    # print(tokens_orig)
+    # print(tokens)
+    # print(input_ids)
+    # print(lm_label_ids)
+    # print(float_labels)
+    # print()
 
     if example.guid < 5:
         logger.info("*** Example ***")
@@ -449,6 +467,9 @@ def main():
     parser.add_argument("--do_train",
                         action='store_true',
                         help="Whether to run training.")
+    parser.add_argument("--do_eval",
+                        action='store_true',
+                        help="Whether to run evaluation.")
     parser.add_argument("--train_batch_size",
                         default=32,
                         type=int,
@@ -543,9 +564,14 @@ def main():
                                     corpus_lines=None, on_memory=args.on_memory)
         num_train_steps = int(
             len(train_dataset) / args.train_batch_size / args.gradient_accumulation_steps * args.num_train_epochs)
+        if num_train_steps == 0:
+            num_train_steps = 1
 
     # Prepare model
     model = BertForNumericalPreTraining.from_pretrained(args.bert_model)
+    # Uncomment if use non-pretrained models
+    # model.cls = BertPreTrainingHeads(model.config, model.bert.embeddings.word_embeddings.weight)
+    # model.apply(model.init_bert_weights)
     if args.fp16:
         model.half()
     model.to(device)
@@ -605,19 +631,22 @@ def main():
         model.train()
         for _ in trange(int(args.num_train_epochs), desc="Epoch"):
             tr_loss = 0
+            total_float_loss = 0
             nb_tr_examples, nb_tr_steps = 0, 0
             for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration")):
                 batch = tuple(t.to(device) for t in batch)
                 input_ids, input_mask, segment_ids, lm_label_ids, is_next, float_labels = batch
-                loss = model(input_ids, segment_ids, input_mask, lm_label_ids, is_next, float_labels)
+                loss, float_loss = model(input_ids, segment_ids, input_mask, lm_label_ids, is_next, float_labels)
                 if n_gpu > 1:
                     loss = loss.mean() # mean() to average on multi-gpu.
+                    float_loss = float_loss.mean()
                 if args.gradient_accumulation_steps > 1:
                     loss = loss / args.gradient_accumulation_steps
                 if args.fp16:
                     optimizer.backward(loss)
                 else:
                     loss.backward()
+                total_float_loss += float_loss.item()
                 tr_loss += loss.item()
                 nb_tr_examples += input_ids.size(0)
                 nb_tr_steps += 1
@@ -629,6 +658,7 @@ def main():
                     optimizer.step()
                     optimizer.zero_grad()
                     global_step += 1
+            print("Float Loss: " + str(total_float_loss))
 
         # Save a trained model
         logger.info("** ** * Saving fine - tuned model ** ** * ")
@@ -636,6 +666,25 @@ def main():
         output_model_file = os.path.join(args.output_dir, "pytorch_model.bin")
         if args.do_train:
             torch.save(model_to_save.state_dict(), output_model_file)
+
+    if args.do_eval:
+        train_dataset = BERTDataset(args.train_file, tokenizer, seq_len=args.max_seq_length,
+                                    corpus_lines=None, on_memory=args.on_memory)
+        if args.local_rank == -1:
+            eval_sampler = RandomSampler(train_dataset)
+        else:
+            eval_sampler = DistributedSampler(train_dataset)
+        eval_dataloader = DataLoader(train_dataset, sampler=eval_sampler, batch_size=args.train_batch_size)
+        model.eval()
+        total_loss = 0.0
+        for step, batch in enumerate(tqdm(eval_dataloader, desc="Iteration")):
+            batch = tuple(t.to(device) for t in batch)
+            input_ids, input_mask, segment_ids, lm_label_ids, is_next, float_labels = batch
+            loss, _ = model(input_ids, segment_ids, input_mask, lm_label_ids, is_next, float_labels)
+            if n_gpu > 1:
+                loss = loss.mean() # mean() to average on multi-gpu.
+            total_loss += loss.item()
+        print("Eval total float loss: " + str(total_loss))
 
 
 def _truncate_seq_pair(tokens_a, tokens_b, max_length):

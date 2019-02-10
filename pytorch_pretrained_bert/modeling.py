@@ -424,10 +424,14 @@ class BertPreTrainingHeads(nn.Module):
 class BertNumericalHead(nn.Module):
     def __init__(self, config):
         super(BertNumericalHead, self).__init__()
-        self.predictions = nn.Linear(config.hidden_size, 1)
+        self.Layer1 = nn.Linear(config.hidden_size, 128)
+        self.ActFn = gelu
+        self.Layer2 = nn.Linear(128, 1)
 
     def forward(self, sequence_output):
-        prediction_score = self.predictions(sequence_output)
+        hidden_state = self.Layer1(sequence_output)
+        hidden_state = self.ActFn(hidden_state)
+        prediction_score = self.Layer2(hidden_state)
         return prediction_score
 
 
@@ -680,24 +684,28 @@ class BertForNumericalPreTraining(PreTrainedBertModel):
                                                    output_all_encoded_layers=False, float_labels=float_labels)
         prediction_scores, seq_relationship_score = self.cls(sequence_output, pooled_output)
         prediction_floats = self.nls(sequence_output)
-        # print(prediction_floats)
 
         if masked_lm_labels is not None and next_sentence_label is not None:
             float_labels = float_labels.view(-1)
             loss_fct = CrossEntropyLoss(ignore_index=-1)
             masked_lm_loss = loss_fct(prediction_scores.view(-1, self.config.vocab_size), masked_lm_labels.view(-1))
-            next_sentence_loss = loss_fct(seq_relationship_score.view(-1, 2), next_sentence_label.view(-1))
 
             # Only care non zeros
             # float_mask = torch.nonzero(float_labels)
             float_mask = torch.nonzero(masked_lm_labels.view(-1) != -1)
-            float_loss_fct = L1Loss()
+            float_loss_fct = MSELoss()
             float_loss = float_loss_fct(prediction_floats.view(-1, 1)[float_mask], float_labels[float_mask])
-            total_loss = masked_lm_loss + next_sentence_loss
-            if float_loss.item() > 0.0:
-                total_loss += float_loss
-                print("Float Loss: " + str(float_loss.item()))
-            return total_loss
+            if self.training:
+                total_loss = masked_lm_loss
+                if float_loss.item() > 0.0:
+                    total_loss += float_loss
+            else:
+                print(float_labels[float_mask])
+                print(prediction_floats.view(-1, 1)[float_mask])
+                print(float_loss.item())
+                print()
+                total_loss = float_loss
+            return total_loss, float_loss
         else:
             return prediction_scores, seq_relationship_score, prediction_floats
 

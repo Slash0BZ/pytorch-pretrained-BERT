@@ -88,6 +88,26 @@ class BertTokenizer(object):
                                               never_split=never_split)
         self.wordpiece_tokenizer = WordpieceTokenizer(vocab=self.vocab)
         self.max_len = max_len if max_len is not None else int(1e12)
+        self.caring_units = [
+            "second",
+            "seconds",
+            "minute",
+            "minutes",
+            "hour",
+            "hours",
+            "day",
+            "days",
+            "week",
+            "weeks",
+            "month",
+            "months",
+            "year",
+            "years",
+            "century",
+            "centuries",
+            "apple",
+            "orange"
+        ]
 
     # Unused
     def augment_vocab(self):
@@ -105,8 +125,10 @@ class BertTokenizer(object):
 
     def tokenize(self, text):
         split_tokens = []
-        for token in self.basic_tokenizer.tokenize(text):
-            if BertTokenizer.num(token) > 0.0:
+        basic_tokens = self.basic_tokenizer.tokenize(text)
+        for idx, token in enumerate(basic_tokens):
+            next_idx = min(idx + 1, len(basic_tokens) - 1)
+            if BertTokenizer.num(token) != 0.0 and basic_tokens[next_idx] in self.caring_units:
                 split_tokens.append("[NUM]" + token)
                 continue
             for sub_token in self.wordpiece_tokenizer.tokenize(token):
@@ -130,10 +152,11 @@ class BertTokenizer(object):
             )
         return ids
 
-    def convert_tokens_to_floats(self, tokens):
+    def convert_tokens_to_floats(self, original_tokens, lm_label_ids):
+        assert(len(original_tokens) == len(lm_label_ids))
         floats = []
-        for token in tokens:
-            if token.startswith("[NUM]"):
+        for idx, token in enumerate(original_tokens):
+            if token.startswith("[NUM]") and lm_label_ids[idx] != -1:
                 floats.append(BertTokenizer.num(token[5:]))
             else:
                 floats.append(0.0)
@@ -247,7 +270,8 @@ class BasicTokenizer(object):
         output = []
         while i < len(chars):
             char = chars[i]
-            if _is_punctuation(char):
+            next_idx = min(len(chars) - 1, i + 1)
+            if _is_punctuation(char) and not chars[next_idx].isdigit():
                 output.append([char])
                 start_new_word = True
             else:
@@ -406,3 +430,4 @@ def _is_punctuation(char):
     if cat.startswith("P"):
         return True
     return False
+

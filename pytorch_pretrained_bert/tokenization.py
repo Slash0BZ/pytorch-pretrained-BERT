@@ -156,7 +156,7 @@ class BertTokenizer(object):
             )
         return ids
 
-    def convert_tokens_to_floats(self, original_tokens, lm_label_ids=None):
+    def convert_tokens_to_floats(self, original_tokens, lm_label_ids=None, mod_tokens=None):
         if lm_label_ids is not None:
             assert(len(original_tokens) == len(lm_label_ids))
         floats = []
@@ -164,7 +164,7 @@ class BertTokenizer(object):
         for idx, token in enumerate(original_tokens):
             if lm_label_ids is not None:
                 # Get the floats of non-masked tokens
-                if token.startswith("[NUM]") and lm_label_ids[idx] == -1:
+                if token.startswith("[NUM]") and mod_tokens[idx] != "[MASK]":
                     floats_nonmask.append(BertTokenizer.num(token[5:]))
                 else:
                     floats_nonmask.append(0.0)

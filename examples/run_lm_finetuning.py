@@ -32,6 +32,7 @@ from torch.utils.data.distributed import DistributedSampler
 
 from pytorch_pretrained_bert.tokenization import BertTokenizer
 from pytorch_pretrained_bert.modeling import BertForPreTraining
+from pytorch_pretrained_bert.modeling import BertModel
 from pytorch_pretrained_bert.modeling import BertForNumericalPreTraining
 from pytorch_pretrained_bert.modeling import BertPreTrainingHeads
 from pytorch_pretrained_bert.optimization import BertAdam
@@ -131,6 +132,7 @@ class BERTDataset(Dataset):
                 self.file = open(self.corpus_path, "r", encoding=self.encoding)
 
         t1, t2, is_next_label = self.random_sent(item)
+        t2 = "this is a useless sentence."
 
         # tokenize
         tokens_a = self.tokenizer.tokenize(t1)
@@ -289,14 +291,24 @@ def random_word(tokens, tokenizer):
     """
     output_label = []
 
+    valid_target = False
     for i, token in enumerate(tokens):
         prob = random.random()
         # mask token with 15% probability
         # [NUM] has 75% probability
         if token.startswith("[NUM]"):
-            # prob = 1.0
-            prob = random.uniform(0.0, 1.0)
+            if valid_target:
+                prob = 1.0
+            else:
+                prob = 0.1
+            # prob = random.uniform(0.0, 0.30)
+        elif token in ["work", "home", "breakfast", "lunch", "sleep"]:
+            prob = random.uniform(0.0, 0.30)
+        else:
+            prob = 1.0
+            # prob = random.random()
         if prob < 0.15:
+            valid_target = True
             prob /= 0.15
 
             # 80% randomly change token to mask token
@@ -392,9 +404,8 @@ def convert_example_to_features(example, max_seq_length, tokenizer):
     segment_ids.append(1)
 
     input_ids = tokenizer.convert_tokens_to_ids(tokens)
-
     # Note: decide whether to mask or not
-    float_labels, float_inputs = tokenizer.convert_tokens_to_floats(tokens_orig, lm_label_ids)
+    float_labels, float_inputs = tokenizer.convert_tokens_to_floats(tokens_orig, lm_label_ids, tokens)
 
     # The mask has 1 for real tokens and 0 for padding tokens. Only real
     # tokens are attended to.
@@ -575,7 +586,9 @@ def main():
 
     # Prepare model
     model = BertForNumericalPreTraining.from_pretrained(args.bert_model)
+    model = BertForNumericalPreTraining(model.config)
     # Uncomment if use non-pretrained models
+    # model.bert = BertModel(model.config)
     # model.cls = BertPreTrainingHeads(model.config, model.bert.embeddings.word_embeddings.weight)
     # model.apply(model.init_bert_weights)
     if args.fp16:
@@ -638,14 +651,16 @@ def main():
         for _ in trange(int(args.num_train_epochs), desc="Epoch"):
             tr_loss = 0
             total_float_loss = 0
+            total_lm_loss = 0
             nb_tr_examples, nb_tr_steps = 0, 0
             for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration")):
                 batch = tuple(t.to(device) for t in batch)
                 input_ids, input_mask, segment_ids, lm_label_ids, is_next, float_labels, float_inputs = batch
-                loss, float_loss = model(input_ids, segment_ids, input_mask, lm_label_ids, is_next, float_labels, float_inputs)
+                loss, float_loss, lm_loss = model(input_ids, segment_ids, input_mask, lm_label_ids, is_next, float_labels, float_inputs)
                 if n_gpu > 1:
                     loss = loss.mean() # mean() to average on multi-gpu.
                     float_loss = float_loss.mean()
+                    lm_loss = lm_loss.mean()
                 if args.gradient_accumulation_steps > 1:
                     loss = loss / args.gradient_accumulation_steps
                 if args.fp16:
@@ -653,6 +668,7 @@ def main():
                 else:
                     loss.backward()
                 total_float_loss += float_loss.item()
+                total_lm_loss += lm_loss.item()
                 tr_loss += loss.item()
                 nb_tr_examples += input_ids.size(0)
                 nb_tr_steps += 1
@@ -665,6 +681,7 @@ def main():
                     optimizer.zero_grad()
                     global_step += 1
             print("Float Loss: " + str(total_float_loss))
+            print("LM Loss: " + str(total_lm_loss))
 
         # Save a trained model
         logger.info("** ** * Saving fine - tuned model ** ** * ")

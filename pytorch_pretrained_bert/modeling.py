@@ -1012,8 +1012,10 @@ class BertForSequenceClassification(PreTrainedBertModel):
         self.classifier = nn.Linear(config.hidden_size, num_labels)
         self.apply(self.init_bert_weights)
 
-    def forward(self, input_ids, token_type_ids=None, attention_mask=None, labels=None):
-        _, pooled_output = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False)
+    def forward(self, input_ids, token_type_ids=None, attention_mask=None, labels=None, float_inputs=None):
+        _, pooled_output, _ = self.bert(input_ids, token_type_ids, attention_mask,
+                                        output_all_encoded_layers=False,
+                                        float_inputs=float_inputs)
         pooled_output = self.dropout(pooled_output)
         logits = self.classifier(pooled_output)
 

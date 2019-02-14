@@ -65,11 +65,13 @@ class InputExample(object):
 class InputFeatures(object):
     """A single set of features of data."""
 
-    def __init__(self, input_ids, input_mask, segment_ids, label_id):
+    def __init__(self, input_ids, input_mask, segment_ids, label_id, float_labels, float_inputs):
         self.input_ids = input_ids
         self.input_mask = input_mask
         self.segment_ids = segment_ids
         self.label_id = label_id
+        self.float_labels = float_labels
+        self.float_inputs = float_inputs
 
 
 class DataProcessor(object):
@@ -280,6 +282,7 @@ def convert_examples_to_features(examples, label_list, max_seq_length, tokenizer
             segment_ids.append(1)
 
         input_ids = tokenizer.convert_tokens_to_ids(tokens)
+        float_labels, float_inputs = tokenizer.convert_tokens_to_floats(tokens)
 
         # The mask has 1 for real tokens and 0 for padding tokens. Only real
         # tokens are attended to.
@@ -290,10 +293,14 @@ def convert_examples_to_features(examples, label_list, max_seq_length, tokenizer
             input_ids.append(0)
             input_mask.append(0)
             segment_ids.append(0)
+            float_labels.append(0.0)
+            float_inputs.append(0.0)
 
         assert len(input_ids) == max_seq_length
         assert len(input_mask) == max_seq_length
         assert len(segment_ids) == max_seq_length
+        assert len(float_labels) == max_seq_length
+        assert len(float_inputs) == max_seq_length
 
         label_id = label_map[example.label]
         if ex_index < 5:
@@ -311,7 +318,9 @@ def convert_examples_to_features(examples, label_list, max_seq_length, tokenizer
                 InputFeatures(input_ids=input_ids,
                               input_mask=input_mask,
                               segment_ids=segment_ids,
-                              label_id=label_id))
+                              label_id=label_id,
+                              float_labels=float_labels,
+                              float_inputs=float_inputs))
     return features
 
 
@@ -564,7 +573,8 @@ def main():
         all_input_mask = torch.tensor([f.input_mask for f in train_features], dtype=torch.long)
         all_segment_ids = torch.tensor([f.segment_ids for f in train_features], dtype=torch.long)
         all_label_ids = torch.tensor([f.label_id for f in train_features], dtype=torch.long)
-        train_data = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_label_ids)
+        all_float_inputs = torch.tensor([f.float_inputs for f in train_features], dtype=torch.long)
+        train_data = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_label_ids, all_float_inputs)
         if args.local_rank == -1:
             train_sampler = RandomSampler(train_data)
         else:
@@ -577,8 +587,8 @@ def main():
             nb_tr_examples, nb_tr_steps = 0, 0
             for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration")):
                 batch = tuple(t.to(device) for t in batch)
-                input_ids, input_mask, segment_ids, label_ids = batch
-                loss = model(input_ids, segment_ids, input_mask, label_ids)
+                input_ids, input_mask, segment_ids, label_ids, float_inputs = batch
+                loss = model(input_ids, segment_ids, input_mask, label_ids, float_inputs=float_inputs)
                 if n_gpu > 1:
                     loss = loss.mean() # mean() to average on multi-gpu.
                 if args.fp16 and args.loss_scale != 1.0:
@@ -622,7 +632,8 @@ def main():
         all_input_mask = torch.tensor([f.input_mask for f in eval_features], dtype=torch.long)
         all_segment_ids = torch.tensor([f.segment_ids for f in eval_features], dtype=torch.long)
         all_label_ids = torch.tensor([f.label_id for f in eval_features], dtype=torch.long)
-        eval_data = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_label_ids)
+        all_float_inputs = torch.tensor([f.float_inputs for f in eval_features], dtype=torch.long)
+        eval_data = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_label_ids, all_float_inputs)
         # Run prediction for full data
         eval_sampler = SequentialSampler(eval_data)
         eval_dataloader = DataLoader(eval_data, sampler=eval_sampler, batch_size=args.eval_batch_size)
@@ -630,15 +641,16 @@ def main():
         model.eval()
         eval_loss, eval_accuracy = 0, 0
         nb_eval_steps, nb_eval_examples = 0, 0
-        for input_ids, input_mask, segment_ids, label_ids in eval_dataloader:
+        for input_ids, input_mask, segment_ids, label_ids, float_inputs in eval_dataloader:
             input_ids = input_ids.to(device)
             input_mask = input_mask.to(device)
             segment_ids = segment_ids.to(device)
             label_ids = label_ids.to(device)
+            float_inputs = float_inputs.to(device)
 
             with torch.no_grad():
-                tmp_eval_loss = model(input_ids, segment_ids, input_mask, label_ids)
-                logits = model(input_ids, segment_ids, input_mask)
+                tmp_eval_loss = model(input_ids, segment_ids, input_mask, label_ids, float_inputs=float_inputs)
+                logits = model(input_ids, segment_ids, input_mask, float_inputs=float_inputs)
 
             logits = logits.detach().cpu().numpy()
             label_ids = label_ids.to('cpu').numpy()

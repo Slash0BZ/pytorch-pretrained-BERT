@@ -133,6 +133,7 @@ class BertTokenizer(object):
         for idx, token in enumerate(basic_tokens):
             next_idx = min(idx + 1, len(basic_tokens) - 1)
             if BertTokenizer.num(token) != 0.0 and basic_tokens[next_idx] in self.caring_units:
+            # if BertTokenizer.num(token) != 0.0:
                 split_tokens.append("[NUM]" + token)
                 continue
             for sub_token in self.wordpiece_tokenizer.tokenize(token):

@@ -297,15 +297,17 @@ def random_word(tokens, tokenizer):
         # mask token with 15% probability
         # [NUM] has 75% probability
         if token.startswith("[NUM]"):
-            if valid_target:
-                prob = 1.0
-            else:
-                prob = 0.1
-            # prob = random.uniform(0.0, 0.30)
-        elif token in ["work", "home", "breakfast", "lunch", "sleep"]:
+            # if valid_target:
+            #     prob = 1.0
+            # else:
+            #     prob = 0.1
             prob = random.uniform(0.0, 0.30)
+        elif token in ["work", "home", "breakfast", "lunch", "sleep"]:
+            pass
+            # prob = random.uniform(0.0, 0.30)
         else:
-            prob = 1.0
+            pass
+            # prob = 1.0
             # prob = random.random()
         if prob < 0.15:
             valid_target = True
@@ -586,7 +588,7 @@ def main():
 
     # Prepare model
     model = BertForNumericalPreTraining.from_pretrained(args.bert_model)
-    model = BertForNumericalPreTraining(model.config)
+    # model = BertForNumericalPreTraining(model.config)
     # Uncomment if use non-pretrained models
     # model.bert = BertModel(model.config)
     # model.cls = BertPreTrainingHeads(model.config, model.bert.embeddings.word_embeddings.weight)

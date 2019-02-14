@@ -201,7 +201,7 @@ class BertEmbeddings(nn.Module):
         if token_type_ids is None:
             token_type_ids = torch.zeros_like(input_ids)
 
-        self.word_embeddings.weight.data[505] = 0
+        # self.word_embeddings.weight.data[505] = 0
         # self.float_embeddings.weight.data[0] = 0
         # self.float_embeddings.weight.data[1] = 0
         words_embeddings = self.word_embeddings(input_ids)

@@ -179,6 +179,7 @@ class ParagraphConverter:
             if not appended:
                 modified_tokens.append(token)
         if modified_tokens == tokens:
+            # pass
             return None
         return modified_tokens
 
@@ -242,6 +243,48 @@ class GigawordExtractor:
             for line in doc:
                 f.write(line + "\n")
             f.write("\n")
+
+
+class LineExtractor:
+
+    def __init__(self, path):
+        self.converter = ParagraphConverter()
+        self.path = path
+        self.processed_docs = []
+
+    def run(self):
+        f = open(self.path, "r")
+        lines = [x.strip() for x in f.readlines()]
+        for l in lines:
+            premise = l.split("\t")[0]
+            answer = l.split("\t")[1]
+            label = l.split("\t")[2]
+            try:
+                premise_concat = ""
+                premise = self.converter.process_paragraph(premise)
+                for p in premise:
+                    premise_concat += p + " "
+                if premise_concat.endswith(" "):
+                    premise_concat = premise_concat[:-1]
+                premise = premise_concat
+
+                answer_concat = ""
+                answer = self.converter.process_paragraph(answer)
+                for a in answer:
+                    answer_concat += a + " "
+                if answer_concat.endswith(" "):
+                    answer_concat = answer_concat[:-1]
+                answer = answer_concat
+
+            except Exception as e:
+                print(e)
+            self.processed_docs.append(premise + "\t" + answer + "\t" + label)
+
+    def output_to_file(self, file_path):
+        f = open(file_path, "w")
+        self.run()
+        for doc in self.processed_docs:
+            f.write(doc + "\n")
 
 
 class GigawordUnitStat:
@@ -334,8 +377,11 @@ class UnitAnalyzer:
         with open(out_path, "wb") as of:
             pickle.dump(out_map, of)
 
-extractor = GigawordExtractor("/Users/xuanyuzhou/Downloads/tmp/2doc")
-extractor.output_to_file("samples/gigaword_big_normalized_01.txt")
+extractor = GigawordExtractor("/Users/xuanyuzhou/Downloads/tmp/afp_eng")
+extractor.output_to_file("samples/gigaword_ultra_normalized_01.txt")
+
+# extractor = LineExtractor("samples/temporal_data_split/test_vanilla.txt")
+# extractor.output_to_file("samples/temporal_data_split/test_normalized.txt")
 
 # unit_extractor = GigawordUnitStat("/Users/xuanyuzhou/Downloads/tmp/2doc")
 # unit_extractor.run()

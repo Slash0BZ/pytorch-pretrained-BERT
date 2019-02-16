@@ -650,6 +650,7 @@ def main():
         train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size)
 
         model.train()
+        total_counter = 0
         for _ in trange(int(args.num_train_epochs), desc="Epoch"):
             tr_loss = 0
             total_float_loss = 0
@@ -682,8 +683,13 @@ def main():
                     optimizer.step()
                     optimizer.zero_grad()
                     global_step += 1
-            print("Float Loss: " + str(total_float_loss))
-            print("LM Loss: " + str(total_lm_loss))
+                total_counter += 1
+                if total_counter % 100 == 0:
+                    print("Float Loss: " + str(total_float_loss))
+                    print("LM Loss: " + str(total_lm_loss))
+                    model_to_save = model.module if hasattr(model, 'module') else model  # Only save the model it-self
+                    output_model_file = os.path.join(args.output_dir, "pytorch_model.bin")
+                    torch.save(model_to_save.state_dict(), output_model_file)
 
         # Save a trained model
         logger.info("** ** * Saving fine - tuned model ** ** * ")

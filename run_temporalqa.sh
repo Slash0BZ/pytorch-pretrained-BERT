@@ -6,7 +6,7 @@ python examples/run_classifier.py \
   --do_train \
   --do_eval \
   --do_lower_case \
-  --data_dir /sample/temporal_data_split \
+  --data_dir samples/temporal_data_split \
   --bert_model bert-base-uncased \
   --max_seq_length 128 \
   --train_batch_size 32 \

@@ -201,7 +201,7 @@ class BertEmbeddings(nn.Module):
         if token_type_ids is None:
             token_type_ids = torch.zeros_like(input_ids)
 
-        # self.word_embeddings.weight.data[505] = 0
+        self.word_embeddings.weight.data[505][0:15] = 0
         # self.float_embeddings.weight.data[0] = 0
         # self.float_embeddings.weight.data[1] = 0
         words_embeddings = self.word_embeddings(input_ids)
@@ -468,25 +468,25 @@ class BertContinuousEmbedding(nn.Module):
     def __init__(self, hidden_size):
         super(BertContinuousEmbedding, self).__init__()
         self.hidden_size = hidden_size
-        self.max = 5
-        self.min = -5
+        self.max = 1
+        self.min = -14
 
     def forward(self, val):
         val = torch.unsqueeze(val, dim=2)
         batch_len = val.size(0)
         seq_len = val.size(1)
-        ret = torch.zeros(val.size(0) * val.size(1), 10, device=val.device)
+        ret = torch.zeros(val.size(0) * val.size(1), 16, device=val.device)
         val = val.flatten()
         for vi in range(0, val.size(0)):
             one_val = val[vi]
             cur_multi = 2.0 ** self.max
-            for ri in range(0, 10):
+            for ri in range(0, 16):
                 if one_val > cur_multi:
                     ret[vi][ri] = cur_multi
                     one_val -= cur_multi
                 cur_multi /= 2.0
-        ret_pad = torch.zeros(batch_len, seq_len, self.hidden_size - 10, device=val.device)
-        return torch.cat((ret.view(batch_len, seq_len, 10), ret_pad), 2)
+        ret_pad = torch.zeros(batch_len, seq_len, self.hidden_size - 16, device=val.device)
+        return torch.cat((ret.view(batch_len, seq_len, 16), ret_pad), 2)
 
 
 class PreTrainedBertModel(nn.Module):

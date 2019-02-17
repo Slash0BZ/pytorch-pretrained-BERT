@@ -297,17 +297,17 @@ def random_word(tokens, tokenizer):
         # mask token with 15% probability
         # [NUM] has 75% probability
         if token.startswith("[NUM]"):
-            # if valid_target:
-            #     prob = 1.0
-            # else:
-            #     prob = 0.1
-            prob = random.uniform(0.0, 0.30)
-        elif token in ["work", "home", "breakfast", "lunch", "sleep"]:
-            pass
+            if valid_target:
+                prob = 1.0
+            else:
+                prob = 0.1
             # prob = random.uniform(0.0, 0.30)
+        elif token in ["work", "home", "breakfast", "lunch", "sleep"]:
+            # pass
+            prob = random.uniform(0.0, 0.30)
         else:
-            pass
-            # prob = 1.0
+            # pass
+            prob = 1.0
             # prob = random.random()
         if prob < 0.15:
             valid_target = True
@@ -670,8 +670,9 @@ def main():
                     optimizer.backward(loss)
                 else:
                     loss.backward()
-                total_float_loss += float_loss.item()
                 total_lm_loss += lm_loss.item()
+                if float_loss.item() > 0.0:
+                    total_float_loss += float_loss.item()
                 tr_loss += loss.item()
                 nb_tr_examples += input_ids.size(0)
                 nb_tr_steps += 1
@@ -685,11 +686,13 @@ def main():
                     global_step += 1
                 total_counter += 1
                 if total_counter % 100 == 0:
-                    print("Float Loss: " + str(total_float_loss))
-                    print("LM Loss: " + str(total_lm_loss))
+                    # print("Float Loss: " + str(total_float_loss))
+                    # print("LM Loss: " + str(total_lm_loss))
                     model_to_save = model.module if hasattr(model, 'module') else model  # Only save the model it-self
                     output_model_file = os.path.join(args.output_dir, "pytorch_model.bin")
                     torch.save(model_to_save.state_dict(), output_model_file)
+            print("Float Loss: " + str(total_float_loss))
+            print("LM Loss: " + str(total_lm_loss))
 
         # Save a trained model
         logger.info("** ** * Saving fine - tuned model ** ** * ")

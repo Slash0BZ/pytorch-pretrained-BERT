@@ -276,7 +276,7 @@ def main():
             float_labels = float_labels.to(device)
             float_inputs = float_inputs.to(device)
 
-            lm_scores, _, float_scores = model(input_ids, token_type_ids=None, attention_mask=input_mask,
+            lm_scores, _, float_vec = model(input_ids, token_type_ids=None, attention_mask=input_mask,
                                                float_labels=float_labels, float_inputs=float_inputs)
 
             for b, example_index in enumerate(example_indices):
@@ -288,13 +288,13 @@ def main():
                 all_out_features = []
                 for (i, token) in enumerate(feature.tokens):
                     lm_scores_item = lm_scores[b][i]
-                    predicted_float = float_scores[b][i]
+                    predicted_float = torch.sum(float_vec[b][i][0:16])
                     lm_chosen = torch.argmax(lm_scores_item).item()
                     predicted_token = tokenizer.ids_to_tokens[lm_chosen]
                     out_features = collections.OrderedDict()
                     out_features["token"] = token
                     out_features["predicted_token"] = predicted_token
-                    out_features["predicted_float"] = [round(x.item(), 2) for x in predicted_float.detach().cpu().numpy()]
+                    out_features["predicted_float"] = [predicted_float.item()]
                     all_out_features.append(out_features)
                 output_json["features"] = all_out_features
                 writer.write(json.dumps(output_json) + "\n")

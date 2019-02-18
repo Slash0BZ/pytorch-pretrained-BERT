@@ -297,17 +297,22 @@ def random_word(tokens, tokenizer):
         # mask token with 15% probability
         # [NUM] has 75% probability
         if token.startswith("[NUM]"):
-            if valid_target:
-                prob = 1.0
-            else:
-                prob = 0.1
-            # prob = random.uniform(0.0, 0.30)
-        elif token in ["work", "home", "breakfast", "lunch", "sleep"]:
-            # pass
+            # prob = 0.1
+            # # if valid_target:
+            # #     prob = 1.0
+            # # else:
+            # #     prob = 0.1
             prob = random.uniform(0.0, 0.30)
+        elif token in ["work", "home", "breakfast", "lunch", "sleep"]:
+            pass
+            # prob = 1.0
+            # prob = random.uniform(0.0, 0.30)
+        elif token in ["useless"]:
+            pass
+            # prob = 0.1
         else:
-            # pass
-            prob = 1.0
+            pass
+            # prob = 1.0
             # prob = random.random()
         if prob < 0.15:
             valid_target = True
@@ -325,9 +330,10 @@ def random_word(tokens, tokenizer):
 
             # append current token to output (we will predict these later)
             try:
-                if token.startswith("[NUM]"):
-                    token = "[unused500]"
-                output_label.append(tokenizer.vocab[token])
+                output_label.append(tokenizer.convert_tokens_to_ids([token])[0])
+                # if token.startswith("[NUM]"):
+                #     token = "[unused500]"
+                # output_label.append(tokenizer.vocab[token])
             except KeyError:
                 # For unknown words (should not occur with BPE vocab)
                 output_label.append(tokenizer.vocab["[UNK]"])
@@ -588,7 +594,7 @@ def main():
 
     # Prepare model
     model = BertForNumericalPreTraining.from_pretrained(args.bert_model)
-    # model = BertForNumericalPreTraining(model.config)
+    model = BertForNumericalPreTraining(model.config)
     # Uncomment if use non-pretrained models
     # model.bert = BertModel(model.config)
     # model.cls = BertPreTrainingHeads(model.config, model.bert.embeddings.word_embeddings.weight)
@@ -671,7 +677,7 @@ def main():
                 else:
                     loss.backward()
                 total_lm_loss += lm_loss.item()
-                if float_loss.item() > 0.0:
+                if float_loss is not None and float_loss.item() > 0.0:
                     total_float_loss += float_loss.item()
                 tr_loss += loss.item()
                 nb_tr_examples += input_ids.size(0)

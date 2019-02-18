@@ -33,6 +33,9 @@ from torch import nn
 from torch.nn import CrossEntropyLoss
 from torch.nn import MSELoss
 from torch.nn import L1Loss
+from torch.nn import KLDivLoss
+from torch.nn import MultiLabelSoftMarginLoss
+import torch.nn.functional as F
 
 from .file_utils import cached_path
 
@@ -180,14 +183,9 @@ class BertEmbeddings(nn.Module):
         # 0 -> [NUM]
         # 1.0 second [SECOND...]
         # other -> other
-        self.word_embeddings = nn.Embedding(config.vocab_size, config.hidden_size, sparse=False, padding_idx=505)
+        self.word_embeddings = nn.Embedding(config.vocab_size, config.hidden_size)
         self.position_embeddings = nn.Embedding(config.max_position_embeddings, config.hidden_size)
         self.token_type_embeddings = nn.Embedding(config.type_vocab_size, config.hidden_size)
-
-        # self.float_embeddings = nn.Embedding(4000, config.hidden_size, padding_idx=0)
-        # self.float_embeddings = BertNumericalEmbedding(config.hidden_size)
-        self.float_embeddings = BertContinuousEmbedding(config.hidden_size)
-        # self.float_embeddings.requires_grad = False
 
         # self.LayerNorm is not snake-cased to stick with TensorFlow model variable name and be able to load
         # any TensorFlow checkpoint file
@@ -201,22 +199,15 @@ class BertEmbeddings(nn.Module):
         if token_type_ids is None:
             token_type_ids = torch.zeros_like(input_ids)
 
-        self.word_embeddings.weight.data[505][:16] = 0
-        # self.float_embeddings.weight.data[0] = 0
-        # self.float_embeddings.weight.data[1] = 0
         words_embeddings = self.word_embeddings(input_ids)
         position_embeddings = self.position_embeddings(position_ids)
         token_type_embeddings = self.token_type_embeddings(token_type_ids)
 
-        # float_values = float_values / 0.001
-        # float_values = (float_values.int()).long()
-        float_embeddings = self.float_embeddings(float_values)
-        embeddings = words_embeddings + float_embeddings
-        embeddings = embeddings + position_embeddings + token_type_embeddings
+        embeddings = words_embeddings + position_embeddings + token_type_embeddings
 
         embeddings = self.LayerNorm(embeddings)
         embeddings = self.dropout(embeddings)
-        return embeddings, float_embeddings
+        return embeddings
 
 
 class BertSelfAttention(nn.Module):
@@ -398,9 +389,9 @@ class BertLMPredictionHead(nn.Module):
         self.bias = nn.Parameter(torch.zeros(bert_model_embedding_weights.size(0)))
 
     def forward(self, hidden_states):
-        hidden_states_one = self.transform(hidden_states)
-        hidden_states = self.decoder(hidden_states_one) + self.bias
-        return hidden_states, hidden_states_one
+        hidden_states = self.transform(hidden_states)
+        hidden_states = self.decoder(hidden_states) + self.bias
+        return hidden_states
 
 
 class BertOnlyMLMHead(nn.Module):
@@ -430,9 +421,9 @@ class BertPreTrainingHeads(nn.Module):
         self.seq_relationship = nn.Linear(config.hidden_size, 2)
 
     def forward(self, sequence_output, pooled_output):
-        prediction_scores, float_prediction_scores = self.predictions(sequence_output)
+        prediction_scores = self.predictions(sequence_output)
         seq_relationship_score = self.seq_relationship(pooled_output)
-        return prediction_scores, seq_relationship_score, float_prediction_scores
+        return prediction_scores, seq_relationship_score
 
 
 class BertNumericalHead(nn.Module):
@@ -719,7 +710,7 @@ class BertModel(PreTrainedBertModel):
         extended_attention_mask = extended_attention_mask.to(dtype=next(self.parameters()).dtype) # fp16 compatibility
         extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
 
-        embedding_output, embedding_loss = self.embeddings(input_ids, token_type_ids, float_inputs)
+        embedding_output = self.embeddings(input_ids, token_type_ids, float_inputs)
         encoded_layers = self.encoder(embedding_output,
                                       extended_attention_mask,
                                       output_all_encoded_layers=output_all_encoded_layers)
@@ -727,7 +718,7 @@ class BertModel(PreTrainedBertModel):
         pooled_output = self.pooler(sequence_output)
         if not output_all_encoded_layers:
             encoded_layers = encoded_layers[-1]
-        return encoded_layers, pooled_output, embedding_loss
+        return encoded_layers, pooled_output
 
 
 class BertForNumericalPreTraining(PreTrainedBertModel):
@@ -736,53 +727,103 @@ class BertForNumericalPreTraining(PreTrainedBertModel):
         super(BertForNumericalPreTraining, self).__init__(config)
         self.bert = BertModel(config)
         self.cls = BertPreTrainingHeads(config, self.bert.embeddings.word_embeddings.weight)
-        # self.nls = BertNumericalHead(config)
-        # self.nls = BertNumericalVectorHead(config)
         self.apply(self.init_bert_weights)
         self.hidden_size = config.hidden_size
+        self.float_indices = list(range(1, 100)) + list(range(104, 999))
+
+    # Need copied tensors
+    def get_float_loss(self, prediction_scores, labels):
+        prediction_scores = prediction_scores.view(-1, self.config.vocab_size)[:, self.float_indices]
+        labels = labels.view(-1)
+        total_loss = None
+        loss_fct = CrossEntropyLoss(ignore_index=-1)
+        for i in range(0, labels.size(0)):
+            cur_scores = prediction_scores[i, :].clone().detach().requires_grad_(True)
+
+            cur_label = labels[i]
+            if cur_label >= 105:
+                cur_label -= 5
+            for j in range(0, cur_scores.size(0)):
+                if j == cur_label:
+                    continue
+                diff = abs(j - cur_label)
+                cur_scores[j] = cur_scores[j] * diff * 0.001
+            cur_loss = loss_fct(cur_scores.view(1, -1), cur_label.view(-1))
+            if total_loss is None:
+                total_loss = cur_loss
+            else:
+                total_loss += cur_loss
+        return total_loss
+
+    def get_soft_float_loss(self, prediction_scores, soft_labels):
+        loss = torch.sum(-soft_labels * F.log_softmax(prediction_scores, -1), -1)
+        mean_loss = loss.mean()
+        return mean_loss
+
+    def get_kl_soft_float_loss(self, prediction_scores, soft_labels):
+        return KLDivLoss(F.log_softmax(prediction_scores, -1), soft_labels)
 
     def forward(self, input_ids, token_type_ids=None, attention_mask=None, masked_lm_labels=None,
                 next_sentence_label=None, float_labels=None, float_inputs=None):
-        sequence_output, pooled_output, _ = self.bert(input_ids, token_type_ids, attention_mask,
+        sequence_output, pooled_output = self.bert(input_ids, token_type_ids, attention_mask,
                                                    output_all_encoded_layers=False,
                                                    float_labels=float_labels,
                                                    float_inputs=float_inputs)
-        prediction_scores, seq_relationship_score, prediction_float_vectors = self.cls(sequence_output, pooled_output)
-        # prediction_float_vectors = self.nls(sequence_output)
+        prediction_scores, seq_relationship_score = self.cls(sequence_output, pooled_output)
 
         if masked_lm_labels is not None and next_sentence_label is not None:
             loss_fct = CrossEntropyLoss(ignore_index=-1)
-            masked_lm_loss = loss_fct(prediction_scores.view(-1, self.config.vocab_size), masked_lm_labels.view(-1))
+            float_mask = torch.nonzero(float_labels.view(-1))
+            value_mask = (masked_lm_labels.view(-1) != -1).nonzero().view(-1)
 
-            # Only care non zeros
-            # No grad?
-            float_label_embeddings, _ = self.bert.embeddings(input_ids, token_type_ids, float_inputs)
-            # print(prediction_scores[0][6][505])
-            # print(prediction_float_vectors[0][6][:10])
-            # print(float_label_embeddings[0][6][:10])
-            float_labels = float_labels.view(-1)
-            float_mask = torch.nonzero(float_labels)
+            # prediction_scores_mod = torch.tensor(prediction_scores).view(-1, self.config.vocab_size)
+            # float_prediction_mod = prediction_scores_mod[float_mask].view(-1, self.config.vocab_size)
+            # if float_prediction_mod.size(0) > 0:
+            #     float_prediction_mod[self.float_indices] = 0
 
+            # masked_lm_labels_mod = masked_lm_labels.view(-1).clone().detach()
+            # masked_lm_labels_mod = masked_lm_labels_mod.scatter_(0, float_mask.view(-1), -1)
+            # masked_lm_loss = loss_fct(
+            #     prediction_scores.view(-1, self.config.vocab_size), masked_lm_labels_mod)
+            #
+            # float_loss_neg = self.get_float_loss_neg(
+            #     prediction_scores.view(-1, self.config.vocab_size)[float_mask],
+            #     masked_lm_labels.view(-1)[float_mask]
+            # )
+            # float_loss_pos = self.get_float_loss_pos(
+            #     prediction_scores.view(-1, self.config.vocab_size)[float_mask],
+            #     masked_lm_labels.view(-1)[float_mask]
+            # )
 
-            float_loss_fct = torch.nn.CosineEmbeddingLoss()
-            float_loss = float_loss_fct(
-                prediction_float_vectors.view(-1, self.hidden_size)[float_mask],
-                float_label_embeddings.view(-1, self.hidden_size)[float_mask],
-                torch.ones_like(float_label_embeddings.view(-1, self.hidden_size)[float_mask])
-            )
+            masked_lm_soft_labels = torch.zeros_like(prediction_scores).view(-1, self.config.vocab_size)[value_mask]
+            for i in range(0, masked_lm_soft_labels.size(0)):
+                cur_label = masked_lm_labels.view(-1)[value_mask][i]
+                if cur_label in self.float_indices:
+                    for other_label in self.float_indices:
+                        if other_label == cur_label:
+                            continue
+                        val = 1.0 - 0.01 * float(abs(cur_label - other_label))
+                        if val < 0.0:
+                            val = 0.0
+                        masked_lm_soft_labels[i][other_label] = val
+                    masked_lm_soft_labels[i][cur_label] = 1.0
+                else:
+                    masked_lm_soft_labels[i][masked_lm_labels.view(-1)[value_mask][i]] = 1.0
 
-            # float_loss_fct = MSELoss()
-            # predicted_float_vals = torch.sum(prediction_float_vectors.view(-1, self.hidden_size)[:, :16], dim=1)
-            # float_loss = float_loss_fct(predicted_float_vals.view(-1)[float_mask], float_labels[float_mask])
+            masked_lm_loss = self.get_soft_float_loss(
+                prediction_scores.view(-1, self.config.vocab_size)[value_mask], masked_lm_soft_labels)
+
+            float_loss = None
             if self.training:
                 total_loss = masked_lm_loss
-                if float_loss.item() > 0.0:
-                    total_loss += float_loss
+                # if float_loss_neg is not None:
+                #     float_loss = float_loss_neg + float_loss_pos
+                #     total_loss += float_loss
             else:
                 total_loss = float_loss
             return total_loss, float_loss, masked_lm_loss
         else:
-            return prediction_scores, seq_relationship_score, prediction_float_vectors
+            return prediction_scores, seq_relationship_score
 
 
 class BertForPreTraining(PreTrainedBertModel):

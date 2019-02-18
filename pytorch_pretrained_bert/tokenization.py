@@ -133,7 +133,6 @@ class BertTokenizer(object):
         for idx, token in enumerate(basic_tokens):
             next_idx = min(idx + 1, len(basic_tokens) - 1)
             if BertTokenizer.num(token) != 0.0 and basic_tokens[next_idx] in self.caring_units:
-            # if BertTokenizer.num(token) != 0.0:
                 split_tokens.append("[NUM]" + token)
                 continue
             for sub_token in self.wordpiece_tokenizer.tokenize(token):
@@ -145,8 +144,17 @@ class BertTokenizer(object):
         ids = []
         for token in tokens:
             if token.startswith("[NUM]"):
-                # Use "[unused500]" to avoid adding new vocab
-                ids.append(self.vocab["[unused500]"])
+                # Use "[unusedX]" to avoid adding new vocab
+                # Assuming number range from 0 - 1
+                num = BertTokenizer.num(token[5:])
+                assert (0 <= num <= 1)
+                inflated_val = int(num / 0.001)
+                if inflated_val < 0:
+                    inflated_val = 0
+                # Because vocab.txt limitation
+                if inflated_val > 993:
+                    inflated_val = 993
+                ids.append(self.vocab["[unused" + str(inflated_val) + "]"])
                 continue
             ids.append(self.vocab[token])
         if len(ids) > self.max_len:

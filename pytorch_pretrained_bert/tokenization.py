@@ -105,12 +105,6 @@ class BertTokenizer(object):
             "years",
             "century",
             "centuries",
-            "apple",
-            "orange",
-            "a.",
-            "a.m",
-            "a.m.",
-            "am"
         ]
 
     # Unused
@@ -132,7 +126,7 @@ class BertTokenizer(object):
         basic_tokens = self.basic_tokenizer.tokenize(text)
         for idx, token in enumerate(basic_tokens):
             next_idx = min(idx + 1, len(basic_tokens) - 1)
-            if BertTokenizer.num(token) != 0.0 and basic_tokens[next_idx] in self.caring_units:
+            if 1.0 >= BertTokenizer.num(token) > 0.0 and basic_tokens[next_idx] in self.caring_units:
                 split_tokens.append("[NUM]" + token)
                 continue
             for sub_token in self.wordpiece_tokenizer.tokenize(token):
@@ -147,6 +141,8 @@ class BertTokenizer(object):
                 # Use "[unusedX]" to avoid adding new vocab
                 # Assuming number range from 0 - 1
                 num = BertTokenizer.num(token[5:])
+                if num > 1 or num < 0:
+                    print(tokens)
                 assert (0 <= num <= 1)
                 inflated_val = int(num / 0.001)
                 if inflated_val < 0:

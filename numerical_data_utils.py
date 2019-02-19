@@ -179,8 +179,8 @@ class ParagraphConverter:
             if not appended:
                 modified_tokens.append(token)
         if modified_tokens == tokens:
-            # pass
-            return None
+            pass
+            # return None
         return modified_tokens
 
     def process_paragraph(self, paragraph):
@@ -377,8 +377,8 @@ class UnitAnalyzer:
         with open(out_path, "wb") as of:
             pickle.dump(out_map, of)
 
-extractor = GigawordExtractor("/Users/xuanyuzhou/Downloads/tmp/afp_eng")
-extractor.output_to_file("samples/gigaword_ultra_normalized_01.txt")
+extractor = GigawordExtractor("/Users/xuanyuzhou/Downloads/tmp/2doc")
+extractor.output_to_file("samples/gigaword_ultra_normalized_01_whole.txt")
 
 # extractor = LineExtractor("samples/temporal_data_split/test_vanilla.txt")
 # extractor.output_to_file("samples/temporal_data_split/test_normalized.txt")

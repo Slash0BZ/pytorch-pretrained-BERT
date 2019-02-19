@@ -132,11 +132,28 @@ class BERTDataset(Dataset):
                 self.file = open(self.corpus_path, "r", encoding=self.encoding)
 
         t1, t2, is_next_label = self.random_sent(item)
-        t2 = "this is a useless sentence."
+
+        tokens_useless = self.tokenizer.tokenize("this is a useless sentence.")
 
         # tokenize
         tokens_a = self.tokenizer.tokenize(t1)
         tokens_b = self.tokenizer.tokenize(t2)
+
+        a_valid = False
+        for t in tokens_a:
+            if t.startswith("[NUM]"):
+                a_valid = True
+                break
+        if not a_valid:
+            tokens_a = copy.deepcopy(tokens_useless)
+
+        b_valid = False
+        for t in tokens_b:
+            if t.startswith("[NUM]"):
+                b_valid = True
+                break
+        if not b_valid:
+            tokens_b = copy.deepcopy(tokens_useless)
 
         # combine to one sample
         cur_example = InputExample(guid=cur_id, tokens_a=tokens_a, tokens_b=tokens_b, is_next=is_next_label)
@@ -298,21 +315,22 @@ def random_word(tokens, tokenizer):
         # [NUM] has 75% probability
         if token.startswith("[NUM]"):
             # prob = 0.1
-            # # if valid_target:
-            # #     prob = 1.0
-            # # else:
-            # #     prob = 0.1
-            prob = random.uniform(0.0, 0.30)
+            # if valid_target:
+            #     prob = 1.0
+            # else:
+            #     prob = 0.1
+            prob = random.uniform(0.0, 0.1)
         elif token in ["work", "home", "breakfast", "lunch", "sleep"]:
-            pass
-            # prob = 1.0
+            # pass
+            prob = 1.0
             # prob = random.uniform(0.0, 0.30)
         elif token in ["useless"]:
-            pass
-            # prob = 0.1
-        else:
-            pass
+            # pass
             # prob = 1.0
+            prob = 0.1
+        else:
+            # pass
+            prob = 1.0
             # prob = random.random()
         if prob < 0.15:
             valid_target = True
@@ -594,7 +612,7 @@ def main():
 
     # Prepare model
     model = BertForNumericalPreTraining.from_pretrained(args.bert_model)
-    model = BertForNumericalPreTraining(model.config)
+    # model = BertForNumericalPreTraining(model.config)
     # Uncomment if use non-pretrained models
     # model.bert = BertModel(model.config)
     # model.cls = BertPreTrainingHeads(model.config, model.bert.embeddings.word_embeddings.weight)
@@ -668,7 +686,6 @@ def main():
                 loss, float_loss, lm_loss = model(input_ids, segment_ids, input_mask, lm_label_ids, is_next, float_labels, float_inputs)
                 if n_gpu > 1:
                     loss = loss.mean() # mean() to average on multi-gpu.
-                    float_loss = float_loss.mean()
                     lm_loss = lm_loss.mean()
                 if args.gradient_accumulation_steps > 1:
                     loss = loss / args.gradient_accumulation_steps

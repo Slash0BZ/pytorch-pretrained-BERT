@@ -287,9 +287,17 @@ def main():
                 output_json["linex_index"] = unique_id
                 all_out_features = []
                 for (i, token) in enumerate(feature.tokens):
+                    if token != "[MASK]":
+                        continue
+                    print(token)
                     lm_scores_item = lm_scores[b][i]
                     # predicted_float = torch.sum(float_vec[b][i][0:16])
                     lm_chosen = torch.argmax(lm_scores_item).item()
+                    for j in range(-100, 0):
+                        print(str(lm_chosen + j) + " score " + str(lm_scores_item[lm_chosen + j]))
+                    print(str(lm_chosen) + " score " + str(lm_scores_item[lm_chosen]))
+                    for j in range(1, 100):
+                        print(str(lm_chosen + j) + " score " + str(lm_scores_item[lm_chosen + j]))
                     predicted_token = tokenizer.ids_to_tokens[lm_chosen]
                     out_features = collections.OrderedDict()
                     out_features["token"] = token

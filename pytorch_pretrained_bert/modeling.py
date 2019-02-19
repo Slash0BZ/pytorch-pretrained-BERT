@@ -29,12 +29,16 @@ import tempfile
 import shutil
 
 import torch
+import numpy as np
 from torch import nn
+from math import *
+from scipy.stats import norm
 from torch.nn import CrossEntropyLoss
 from torch.nn import MSELoss
 from torch.nn import L1Loss
 from torch.nn import KLDivLoss
 from torch.nn import MultiLabelSoftMarginLoss
+from torch.nn import BCEWithLogitsLoss
 import torch.nn.functional as F
 
 from .file_utils import cached_path
@@ -730,6 +734,15 @@ class BertForNumericalPreTraining(PreTrainedBertModel):
         self.apply(self.init_bert_weights)
         self.hidden_size = config.hidden_size
         self.float_indices = list(range(1, 100)) + list(range(104, 999))
+        self.mu = 0.5
+        self.sigma = 0.03
+        self.weight_vec = []
+        for i in range(0, 199):
+            cur = 0.4 + float(i) * 0.001
+            cur_next = cur + 0.001
+            self.weight_vec.append(
+                norm.cdf(cur_next, self.mu, self.sigma) - norm.cdf(cur, self.mu, self.sigma)
+            )
 
     # Need copied tensors
     def get_float_loss(self, prediction_scores, labels):
@@ -756,6 +769,8 @@ class BertForNumericalPreTraining(PreTrainedBertModel):
         return total_loss
 
     def get_soft_float_loss(self, prediction_scores, soft_labels):
+        # prediction_scores [SEQ_LEN, VOCAB_SIZE]
+        # soft_labels [SEQ_LEN, VOCAB_SIZE]
         loss = torch.sum(-soft_labels * F.log_softmax(prediction_scores, -1), -1)
         mean_loss = loss.mean()
         return mean_loss
@@ -773,6 +788,7 @@ class BertForNumericalPreTraining(PreTrainedBertModel):
 
         if masked_lm_labels is not None and next_sentence_label is not None:
             loss_fct = CrossEntropyLoss(ignore_index=-1)
+            next_sentence_loss = loss_fct(seq_relationship_score.view(-1, 2), next_sentence_label.view(-1))
             float_mask = torch.nonzero(float_labels.view(-1))
             value_mask = (masked_lm_labels.view(-1) != -1).nonzero().view(-1)
 
@@ -800,13 +816,12 @@ class BertForNumericalPreTraining(PreTrainedBertModel):
                 cur_label = masked_lm_labels.view(-1)[value_mask][i]
                 if cur_label in self.float_indices:
                     for other_label in self.float_indices:
-                        if other_label == cur_label:
-                            continue
-                        val = 1.0 - 0.01 * float(abs(cur_label - other_label))
-                        if val < 0.0:
-                            val = 0.0
+                        val = 0.0
+                        if 99 > abs(cur_label - other_label) >= 0:
+                            val = self.weight_vec[100 - cur_label + other_label]
+                        if val > 1.0:
+                            val = 1.0
                         masked_lm_soft_labels[i][other_label] = val
-                    masked_lm_soft_labels[i][cur_label] = 1.0
                 else:
                     masked_lm_soft_labels[i][masked_lm_labels.view(-1)[value_mask][i]] = 1.0
 
@@ -816,9 +831,6 @@ class BertForNumericalPreTraining(PreTrainedBertModel):
             float_loss = None
             if self.training:
                 total_loss = masked_lm_loss
-                # if float_loss_neg is not None:
-                #     float_loss = float_loss_neg + float_loss_pos
-                #     total_loss += float_loss
             else:
                 total_loss = float_loss
             return total_loss, float_loss, masked_lm_loss
@@ -1074,7 +1086,7 @@ class BertForSequenceClassification(PreTrainedBertModel):
         self.apply(self.init_bert_weights)
 
     def forward(self, input_ids, token_type_ids=None, attention_mask=None, labels=None, float_inputs=None):
-        _, pooled_output, _ = self.bert(input_ids, token_type_ids, attention_mask,
+        _, pooled_output = self.bert(input_ids, token_type_ids, attention_mask,
                                         output_all_encoded_layers=False,
                                         float_inputs=float_inputs)
         pooled_output = self.dropout(pooled_output)

@@ -779,51 +779,17 @@ class BertForNumericalPreTraining(PreTrainedBertModel):
         return KLDivLoss(F.log_softmax(prediction_scores, -1), soft_labels)
 
     def forward(self, input_ids, token_type_ids=None, attention_mask=None, masked_lm_labels=None,
-                next_sentence_label=None, float_labels=None, float_inputs=None):
+                next_sentence_label=None, float_labels=None, float_inputs=None, soft_labels=None):
         sequence_output, pooled_output = self.bert(input_ids, token_type_ids, attention_mask,
                                                    output_all_encoded_layers=False,
                                                    float_labels=float_labels,
-                                                   float_inputs=float_inputs)
+                                                   float_inputs=float_inputs,)
         prediction_scores, seq_relationship_score = self.cls(sequence_output, pooled_output)
 
         if masked_lm_labels is not None and next_sentence_label is not None:
-            loss_fct = CrossEntropyLoss(ignore_index=-1)
-            next_sentence_loss = loss_fct(seq_relationship_score.view(-1, 2), next_sentence_label.view(-1))
-            float_mask = torch.nonzero(float_labels.view(-1))
             value_mask = (masked_lm_labels.view(-1) != -1).nonzero().view(-1)
 
-            # prediction_scores_mod = torch.tensor(prediction_scores).view(-1, self.config.vocab_size)
-            # float_prediction_mod = prediction_scores_mod[float_mask].view(-1, self.config.vocab_size)
-            # if float_prediction_mod.size(0) > 0:
-            #     float_prediction_mod[self.float_indices] = 0
-
-            # masked_lm_labels_mod = masked_lm_labels.view(-1).clone().detach()
-            # masked_lm_labels_mod = masked_lm_labels_mod.scatter_(0, float_mask.view(-1), -1)
-            # masked_lm_loss = loss_fct(
-            #     prediction_scores.view(-1, self.config.vocab_size), masked_lm_labels_mod)
-            #
-            # float_loss_neg = self.get_float_loss_neg(
-            #     prediction_scores.view(-1, self.config.vocab_size)[float_mask],
-            #     masked_lm_labels.view(-1)[float_mask]
-            # )
-            # float_loss_pos = self.get_float_loss_pos(
-            #     prediction_scores.view(-1, self.config.vocab_size)[float_mask],
-            #     masked_lm_labels.view(-1)[float_mask]
-            # )
-
-            masked_lm_soft_labels = torch.zeros_like(prediction_scores).view(-1, self.config.vocab_size)[value_mask]
-            for i in range(0, masked_lm_soft_labels.size(0)):
-                cur_label = masked_lm_labels.view(-1)[value_mask][i]
-                if cur_label in self.float_indices:
-                    for other_label in self.float_indices:
-                        val = 0.0
-                        if 99 > abs(cur_label - other_label) >= 0:
-                            val = self.weight_vec[100 - cur_label + other_label]
-                        if val > 1.0:
-                            val = 1.0
-                        masked_lm_soft_labels[i][other_label] = val
-                else:
-                    masked_lm_soft_labels[i][masked_lm_labels.view(-1)[value_mask][i]] = 1.0
+            masked_lm_soft_labels = soft_labels.view(-1, self.config.vocab_size)[value_mask]
 
             masked_lm_loss = self.get_soft_float_loss(
                 prediction_scores.view(-1, self.config.vocab_size)[value_mask], masked_lm_soft_labels)

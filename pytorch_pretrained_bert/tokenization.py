@@ -24,6 +24,7 @@ import os
 import logging
 
 from .file_utils import cached_path
+from scipy.stats import norm
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +107,16 @@ class BertTokenizer(object):
             "century",
             "centuries",
         ]
+        self.float_indices = list(range(1, 100)) + list(range(104, 999))
+        self.mu = 0.5
+        self.sigma = 0.03
+        self.weight_vec = []
+        for i in range(0, 199):
+            cur = 0.4 + float(i) * 0.001
+            cur_next = cur + 0.001
+            self.weight_vec.append(
+                norm.cdf(cur_next, self.mu, self.sigma) - norm.cdf(cur, self.mu, self.sigma)
+            )
 
     # Unused
     def augment_vocab(self):
@@ -160,6 +171,24 @@ class BertTokenizer(object):
                 " sequence through BERT will result in indexing errors".format(len(ids), self.max_len)
             )
         return ids
+
+    def convert_tokens_to_softlabels(self, lm_label_ids):
+        soft_labels = []
+        for label in lm_label_ids:
+            cur = [0.0] * 30522
+            if label == -1:
+                soft_labels.append(cur)
+                continue
+            if label in self.float_indices:
+                for other_label in self.float_indices:
+                    val = 0.0
+                    if 99 > abs(label - other_label) >= 0:
+                        val = self.weight_vec[100 - label + other_label]
+                    cur[other_label] = val
+            else:
+                cur[label] = 1.0
+            soft_labels.append(cur)
+        return soft_labels
 
     def convert_tokens_to_floats(self, original_tokens, lm_label_ids=None, mod_tokens=None):
         if lm_label_ids is not None:

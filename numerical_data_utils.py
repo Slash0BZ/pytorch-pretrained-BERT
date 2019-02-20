@@ -1,6 +1,7 @@
 import os
 import re
 import pickle
+import random
 
 from word2number import w2n
 from ccg_nlpy import local_pipeline
@@ -167,7 +168,7 @@ class ParagraphConverter:
                         num_position = min_start
                 if value is not None:
                     mean, std = self.unit_vals[self.inverse_map[token]]
-                    max_value = mean + 10.0 * std
+                    max_value = mean + 3.0 * std
                     value = min(max_value, value)
                     value = max(value, 0.0)
                     value = value / max_value
@@ -239,7 +240,9 @@ class GigawordExtractor:
     def output_to_file(self, file_path):
         f = open(file_path, "w")
         self.run()
+        random.shuffle(self.processed_docs)
         for doc in self.processed_docs:
+            random.shuffle(doc)
             for line in doc:
                 f.write(line + "\n")
             f.write("\n")
@@ -377,11 +380,11 @@ class UnitAnalyzer:
         with open(out_path, "wb") as of:
             pickle.dump(out_map, of)
 
-extractor = GigawordExtractor("/Users/xuanyuzhou/Downloads/tmp/2doc")
-extractor.output_to_file("samples/gigaword_ultra_normalized_01_whole.txt")
+# extractor = GigawordExtractor("/Users/xuanyuzhou/Downloads/tmp/2doc")
+# extractor.output_to_file("samples/gigaword_big_normalized_01_3.txt")
 
-# extractor = LineExtractor("samples/temporal_data_split/test_vanilla.txt")
-# extractor.output_to_file("samples/temporal_data_split/test_normalized.txt")
+extractor = LineExtractor("samples/temporal_data_split/train_vanilla.txt")
+extractor.output_to_file("samples/temporal_data_split/train_normalized_3.txt")
 
 # unit_extractor = GigawordUnitStat("/Users/xuanyuzhou/Downloads/tmp/2doc")
 # unit_extractor.run()

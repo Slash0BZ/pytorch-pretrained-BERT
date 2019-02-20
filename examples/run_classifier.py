@@ -342,12 +342,13 @@ def _truncate_seq_pair(tokens_a, tokens_b, max_length):
 
 def accuracy(out, labels):
     outputs = np.argmax(out, axis=1)
+    prints = []
     for i in outputs:
         if i == 0:
-            print("yes")
+            prints.append("yes")
         else:
-            print("no")
-    return np.sum(outputs == labels)
+            prints.append("no")
+    return np.sum(outputs == labels), prints
 
 def copy_optimizer_params_to_model(named_params_model, named_params_optimizer):
     """ Utility function for optimize_on_cpu and 16-bits training.
@@ -641,6 +642,7 @@ def main():
         model.eval()
         eval_loss, eval_accuracy = 0, 0
         nb_eval_steps, nb_eval_examples = 0, 0
+        total_prints = []
         for input_ids, input_mask, segment_ids, label_ids, float_inputs in eval_dataloader:
             input_ids = input_ids.to(device)
             input_mask = input_mask.to(device)
@@ -654,7 +656,8 @@ def main():
 
             logits = logits.detach().cpu().numpy()
             label_ids = label_ids.to('cpu').numpy()
-            tmp_eval_accuracy = accuracy(logits, label_ids)
+            tmp_eval_accuracy, prints = accuracy(logits, label_ids)
+            total_prints += prints
 
             eval_loss += tmp_eval_loss.mean().item()
             eval_accuracy += tmp_eval_accuracy
@@ -671,11 +674,15 @@ def main():
                   'loss': tr_loss/nb_tr_steps}
 
         output_eval_file = os.path.join(args.output_dir, "eval_results.txt")
+        output_print_file = os.path.join(args.output_dir, "eval_outputs.txt")
         with open(output_eval_file, "w") as writer:
             logger.info("***** Eval results *****")
             for key in sorted(result.keys()):
                 logger.info("  %s = %s", key, str(result[key]))
                 writer.write("%s = %s\n" % (key, str(result[key])))
+        with open(output_print_file, "w") as writer:
+            for l in total_prints:
+                writer.write(l + "\n")
 
 if __name__ == "__main__":
     main()

@@ -167,7 +167,8 @@ class BERTDataset(Dataset):
                        torch.tensor(cur_features.lm_label_ids),
                        torch.tensor(cur_features.is_next),
                        torch.tensor(cur_features.float_labels),
-                       torch.tensor(cur_features.float_inputs))
+                       torch.tensor(cur_features.float_inputs),
+                       torch.tensor(cur_features.soft_labels))
 
         return cur_tensors
 
@@ -289,7 +290,7 @@ class InputExample(object):
 class InputFeatures(object):
     """A single set of features of data."""
 
-    def __init__(self, input_ids, input_mask, segment_ids, is_next, lm_label_ids, float_labels, float_inputs):
+    def __init__(self, input_ids, input_mask, segment_ids, is_next, lm_label_ids, float_labels, float_inputs, soft_labels):
         self.input_ids = input_ids
         self.input_mask = input_mask
         self.segment_ids = segment_ids
@@ -297,6 +298,7 @@ class InputFeatures(object):
         self.lm_label_ids = lm_label_ids
         self.float_labels = float_labels
         self.float_inputs = float_inputs
+        self.soft_labels = soft_labels
 
 
 def random_word(tokens, tokenizer):
@@ -319,18 +321,18 @@ def random_word(tokens, tokenizer):
             #     prob = 1.0
             # else:
             #     prob = 0.1
-            prob = random.uniform(0.0, 0.1)
+            prob = random.uniform(0.0, 0.3)
         elif token in ["work", "home", "breakfast", "lunch", "sleep"]:
-            # pass
-            prob = 1.0
+            pass
+            # prob = 1.0
             # prob = random.uniform(0.0, 0.30)
         elif token in ["useless"]:
-            # pass
+            pass
             # prob = 1.0
-            prob = 0.1
+            # prob = 0.1
         else:
-            # pass
-            prob = 1.0
+            pass
+            # prob = 1.0
             # prob = random.random()
         if prob < 0.15:
             valid_target = True
@@ -433,6 +435,8 @@ def convert_example_to_features(example, max_seq_length, tokenizer):
     # Note: decide whether to mask or not
     float_labels, float_inputs = tokenizer.convert_tokens_to_floats(tokens_orig, lm_label_ids, tokens)
 
+    soft_labels = tokenizer.convert_tokens_to_softlabels(lm_label_ids)
+
     # The mask has 1 for real tokens and 0 for padding tokens. Only real
     # tokens are attended to.
     input_mask = [1] * len(input_ids)
@@ -445,6 +449,7 @@ def convert_example_to_features(example, max_seq_length, tokenizer):
         lm_label_ids.append(-1)
         float_labels.append(0.0)
         float_inputs.append(0.0)
+        soft_labels.append([0.0] * 30522)
 
     assert len(input_ids) == max_seq_length
     assert len(input_mask) == max_seq_length
@@ -452,6 +457,7 @@ def convert_example_to_features(example, max_seq_length, tokenizer):
     assert len(lm_label_ids) == max_seq_length
     assert len(float_labels) == max_seq_length
     assert len(float_inputs) == max_seq_length
+    assert len(soft_labels) == max_seq_length
     # print(tokens_orig)
     # print(tokens)
     # print(input_ids)
@@ -478,7 +484,8 @@ def convert_example_to_features(example, max_seq_length, tokenizer):
                              lm_label_ids=lm_label_ids,
                              is_next=example.is_next,
                              float_labels=float_labels,
-                             float_inputs=float_inputs)
+                             float_inputs=float_inputs,
+                             soft_labels=soft_labels)
     return features
 
 
@@ -682,8 +689,8 @@ def main():
             nb_tr_examples, nb_tr_steps = 0, 0
             for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration")):
                 batch = tuple(t.to(device) for t in batch)
-                input_ids, input_mask, segment_ids, lm_label_ids, is_next, float_labels, float_inputs = batch
-                loss, float_loss, lm_loss = model(input_ids, segment_ids, input_mask, lm_label_ids, is_next, float_labels, float_inputs)
+                input_ids, input_mask, segment_ids, lm_label_ids, is_next, float_labels, float_inputs, soft_labels = batch
+                loss, float_loss, lm_loss = model(input_ids, segment_ids, input_mask, lm_label_ids, is_next, float_labels, float_inputs, soft_labels)
                 if n_gpu > 1:
                     loss = loss.mean() # mean() to average on multi-gpu.
                     lm_loss = lm_loss.mean()
@@ -709,13 +716,13 @@ def main():
                     global_step += 1
                 total_counter += 1
                 if total_counter % 100 == 0:
-                    # print("Float Loss: " + str(total_float_loss))
-                    # print("LM Loss: " + str(total_lm_loss))
+                    print("Float Loss: " + str(total_float_loss))
+                    print("LM Loss: " + str(total_lm_loss))
+                    total_float_loss = 0.0
+                    total_lm_loss = 0.0
                     model_to_save = model.module if hasattr(model, 'module') else model  # Only save the model it-self
-                    output_model_file = os.path.join(args.output_dir, "pytorch_model.bin")
+                    output_model_file = os.path.join(args.output_dir, "pytorch_model.bin" + "." + str(total_counter))
                     torch.save(model_to_save.state_dict(), output_model_file)
-            print("Float Loss: " + str(total_float_loss))
-            print("LM Loss: " + str(total_lm_loss))
 
         # Save a trained model
         logger.info("** ** * Saving fine - tuned model ** ** * ")

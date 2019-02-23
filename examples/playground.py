@@ -1,13 +1,27 @@
 import torch
 from pytorch_pretrained_bert import BertTokenizer, BertModel, BertForMaskedLM
+from pytorch_pretrained_bert.modeling import BertForNumericalPreTraining
+import torch.nn.functional as F
 
 # Load pre-trained model tokenizer (vocabulary)
-tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
-f = open('samples/gigaword_ultra_normalized_01.txt', "r")
-lines = [x.strip() for x in f.readlines()]
+# tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+# f = open('samples/gigaword_ultra_normalized_01.txt', "r")
+# lines = [x.strip() for x in f.readlines()]
+#
+# for line in lines:
+#     tokenizer.tokenize(line)
 
-for line in lines:
-    tokenizer.tokenize(line)
+
+model = BertForNumericalPreTraining.from_pretrained("models/bert-base-uncased-num-normalized-01-100")
+float_indices = list(range(1, 100)) + list(range(104, 999))
+
+dist = 0.0
+for i in float_indices:
+    emb_1 = model.bert.embeddings.word_embeddings(torch.tensor([i]))
+    emb_2 = model.bert.embeddings.word_embeddings(torch.tensor([i + 1]))
+    dist += F.cosine_similarity(emb_1, emb_2)
+
+print(dist)
 
 # # Tokenized input
 # text = "Who was Jim Henson ? Jim Henson was a puppeteer"

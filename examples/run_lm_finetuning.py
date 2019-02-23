@@ -139,21 +139,21 @@ class BERTDataset(Dataset):
         tokens_a = self.tokenizer.tokenize(t1)
         tokens_b = self.tokenizer.tokenize(t2)
 
-        a_valid = False
-        for t in tokens_a:
-            if t.startswith("[NUM]"):
-                a_valid = True
-                break
-        if not a_valid:
-            tokens_a = copy.deepcopy(tokens_useless)
-
-        b_valid = False
-        for t in tokens_b:
-            if t.startswith("[NUM]"):
-                b_valid = True
-                break
-        if not b_valid:
-            tokens_b = copy.deepcopy(tokens_useless)
+        # a_valid = False
+        # for t in tokens_a:
+        #     if BertTokenizer.num(t) > 0:
+        #         a_valid = True
+        #         break
+        # if not a_valid:
+        #     tokens_a = copy.deepcopy(tokens_useless)
+        #
+        # b_valid = False
+        # for t in tokens_b:
+        #     if BertTokenizer.num(t) > 0:
+        #         b_valid = True
+        #         break
+        # if not b_valid:
+        #     tokens_b = copy.deepcopy(tokens_useless)
 
         # combine to one sample
         cur_example = InputExample(guid=cur_id, tokens_a=tokens_a, tokens_b=tokens_b, is_next=is_next_label)
@@ -166,7 +166,6 @@ class BERTDataset(Dataset):
                        torch.tensor(cur_features.segment_ids),
                        torch.tensor(cur_features.lm_label_ids),
                        torch.tensor(cur_features.is_next),
-                       torch.tensor(cur_features.float_labels),
                        torch.tensor(cur_features.float_inputs),
                        torch.tensor(cur_features.soft_labels))
 
@@ -315,7 +314,7 @@ def random_word(tokens, tokenizer):
         prob = random.random()
         # mask token with 15% probability
         # [NUM] has 75% probability
-        if token.startswith("[NUM]"):
+        if BertTokenizer.num(token) > 0:
             # prob = 0.1
             # if valid_target:
             #     prob = 1.0
@@ -435,7 +434,7 @@ def convert_example_to_features(example, max_seq_length, tokenizer):
     # Note: decide whether to mask or not
     float_labels, float_inputs = tokenizer.convert_tokens_to_floats(tokens_orig, lm_label_ids, tokens)
 
-    soft_labels = tokenizer.convert_tokens_to_softlabels(lm_label_ids)
+    soft_labels = tokenizer.convert_tokens_to_softlabels(tokens_orig, lm_label_ids)
 
     # The mask has 1 for real tokens and 0 for padding tokens. Only real
     # tokens are attended to.
@@ -448,14 +447,13 @@ def convert_example_to_features(example, max_seq_length, tokenizer):
         segment_ids.append(0)
         lm_label_ids.append(-1)
         float_labels.append(0.0)
-        float_inputs.append(0.0)
-        soft_labels.append([0.0] * 30522)
+        float_inputs.append(0)
+        soft_labels.append([0.0] * 1001)
 
     assert len(input_ids) == max_seq_length
     assert len(input_mask) == max_seq_length
     assert len(segment_ids) == max_seq_length
     assert len(lm_label_ids) == max_seq_length
-    assert len(float_labels) == max_seq_length
     assert len(float_inputs) == max_seq_length
     assert len(soft_labels) == max_seq_length
     # print(tokens_orig)
@@ -689,8 +687,8 @@ def main():
             nb_tr_examples, nb_tr_steps = 0, 0
             for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration")):
                 batch = tuple(t.to(device) for t in batch)
-                input_ids, input_mask, segment_ids, lm_label_ids, is_next, float_labels, float_inputs, soft_labels = batch
-                loss, float_loss, lm_loss = model(input_ids, segment_ids, input_mask, lm_label_ids, is_next, float_labels, float_inputs, soft_labels)
+                input_ids, input_mask, segment_ids, lm_label_ids, is_next, float_inputs, soft_labels = batch
+                loss, float_loss, lm_loss = model(input_ids, segment_ids, input_mask, lm_label_ids, is_next, None, float_inputs, soft_labels)
                 if n_gpu > 1:
                     loss = loss.mean() # mean() to average on multi-gpu.
                     lm_loss = lm_loss.mean()
@@ -701,8 +699,7 @@ def main():
                 else:
                     loss.backward()
                 total_lm_loss += lm_loss.item()
-                if float_loss is not None and float_loss.item() > 0.0:
-                    total_float_loss += float_loss.item()
+                total_float_loss += float_loss.item()
                 tr_loss += loss.item()
                 nb_tr_examples += input_ids.size(0)
                 nb_tr_steps += 1

@@ -133,7 +133,6 @@ def convert_examples_to_features(examples, seq_length, tokenizer):
         assert len(input_ids) == seq_length
         assert len(input_mask) == seq_length
         assert len(input_type_ids) == seq_length
-        assert len(float_labels) == seq_length
         assert len(float_inputs) == seq_length
 
         if ex_index < 5:
@@ -257,11 +256,10 @@ def main():
 
     all_input_ids = torch.tensor([f.input_ids for f in features], dtype=torch.long)
     all_input_mask = torch.tensor([f.input_mask for f in features], dtype=torch.long)
-    all_float_labels = torch.tensor([f.float_labels for f in features], dtype=torch.float)
     all_float_inputs = torch.tensor([f.float_inputs for f in features], dtype=torch.float)
     all_example_index = torch.arange(all_input_ids.size(0), dtype=torch.long)
 
-    eval_data = TensorDataset(all_input_ids, all_input_mask, all_example_index, all_float_labels, all_float_inputs)
+    eval_data = TensorDataset(all_input_ids, all_input_mask, all_example_index, all_float_inputs)
     if args.local_rank == -1:
         eval_sampler = SequentialSampler(eval_data)
     else:
@@ -270,14 +268,12 @@ def main():
 
     model.eval()
     with open(args.output_file, "w", encoding='utf-8') as writer:
-        for input_ids, input_mask, example_indices, float_labels, float_inputs in eval_dataloader:
+        for input_ids, input_mask, example_indices, float_inputs in eval_dataloader:
             input_ids = input_ids.to(device)
             input_mask = input_mask.to(device)
-            float_labels = float_labels.to(device)
             float_inputs = float_inputs.to(device)
 
-            lm_scores, _ = model(input_ids, token_type_ids=None, attention_mask=input_mask,
-                                               float_labels=float_labels, float_inputs=float_inputs)
+            lm_scores, float_scores, _ = model(input_ids, token_type_ids=None, attention_mask=input_mask, float_inputs=float_inputs)
 
             for b, example_index in enumerate(example_indices):
                 feature = features[example_index.item()]
@@ -291,13 +287,15 @@ def main():
                         continue
                     print(token)
                     lm_scores_item = lm_scores[b][i]
+                    float_scores_item = float_scores[b][i]
                     # predicted_float = torch.sum(float_vec[b][i][0:16])
                     lm_chosen = torch.argmax(lm_scores_item).item()
+                    float_chosen = torch.argmax(float_scores_item).item()
                     for j in range(-100, 0):
-                        print(str(lm_chosen + j) + " score " + str(lm_scores_item[lm_chosen + j]))
-                    print(str(lm_chosen) + " score " + str(lm_scores_item[lm_chosen]))
+                        print(str(float_chosen + j) + " score " + str(float_scores_item[float_chosen + j]))
+                    print(str(float_chosen) + " score " + str(float_scores_item[float_chosen]))
                     for j in range(1, 100):
-                        print(str(lm_chosen + j) + " score " + str(lm_scores_item[lm_chosen + j]))
+                        print(str(float_chosen + j) + " score " + str(float_scores_item[float_chosen + j]))
                     predicted_token = tokenizer.ids_to_tokens[lm_chosen]
                     out_features = collections.OrderedDict()
                     out_features["token"] = token

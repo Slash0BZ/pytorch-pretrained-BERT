@@ -25,6 +25,7 @@ import logging
 
 from .file_utils import cached_path
 from scipy.stats import norm
+from math import ceil
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +110,7 @@ class BertTokenizer(object):
         ]
         self.float_indices = list(range(1, 100)) + list(range(104, 999))
         self.mu = 0.5
-        self.sigma = 0.03
+        self.sigma = 0.002
         self.weight_vec = []
         for i in range(0, 199):
             cur = 0.4 + float(i) * 0.001
@@ -128,18 +129,24 @@ class BertTokenizer(object):
     @staticmethod
     def num(text):
         try:
-            return float(text)
+            cur = float(text)
+            if cur <= 0.0:
+                cur = 0.1
+            return ceil(cur)
         except:
-            return 0.0
+            return 0
 
     def tokenize(self, text):
         split_tokens = []
         basic_tokens = self.basic_tokenizer.tokenize(text)
         for idx, token in enumerate(basic_tokens):
-            next_idx = min(idx + 1, len(basic_tokens) - 1)
-            if 1.0 >= BertTokenizer.num(token) > 0.0 and basic_tokens[next_idx] in self.caring_units:
-                split_tokens.append("[NUM]" + token)
-                continue
+            # next_idx = min(idx + 1, len(basic_tokens) - 1)
+            # if BertTokenizer.num(token) > 0:
+            #     split_tokens.append(token)
+            #     continue
+            if BertTokenizer.num(token) > 0:
+                if token not in self.vocab:
+                    token = str(ceil(BertTokenizer.num(token)))
             for sub_token in self.wordpiece_tokenizer.tokenize(token):
                 split_tokens.append(sub_token)
         return split_tokens
@@ -148,21 +155,6 @@ class BertTokenizer(object):
         """Converts a sequence of tokens into ids using the vocab."""
         ids = []
         for token in tokens:
-            if token.startswith("[NUM]"):
-                # Use "[unusedX]" to avoid adding new vocab
-                # Assuming number range from 0 - 1
-                num = BertTokenizer.num(token[5:])
-                if num > 1 or num < 0:
-                    print(tokens)
-                assert (0 <= num <= 1)
-                inflated_val = int(num / 0.001)
-                if inflated_val < 0:
-                    inflated_val = 0
-                # Because vocab.txt limitation
-                if inflated_val > 993:
-                    inflated_val = 993
-                ids.append(self.vocab["[unused" + str(inflated_val) + "]"])
-                continue
             ids.append(self.vocab[token])
         if len(ids) > self.max_len:
             raise ValueError(
@@ -172,21 +164,26 @@ class BertTokenizer(object):
             )
         return ids
 
-    def convert_tokens_to_softlabels(self, lm_label_ids):
+    def convert_tokens_to_softlabels(self, tokens, lm_label_ids):
         soft_labels = []
-        for label in lm_label_ids:
-            cur = [0.0] * 30522
-            if label == -1:
+        for idx, token in enumerate(tokens):
+            cur = [0.0] * 1001
+            if lm_label_ids[idx] == -1:
                 soft_labels.append(cur)
                 continue
-            if label in self.float_indices:
-                for other_label in self.float_indices:
+
+            num = BertTokenizer.num(token)
+            if num > 1000:
+                num = 1000
+            if num > 0:
+                label = num
+                for other_label in range(max(1, num-100), min(1000, num+100)):
                     val = 0.0
                     if 99 > abs(label - other_label) >= 0:
                         val = self.weight_vec[100 - label + other_label]
                     cur[other_label] = val
             else:
-                cur[label] = 1.0
+                cur[0] = 1.0
             soft_labels.append(cur)
         return soft_labels
 
@@ -196,24 +193,16 @@ class BertTokenizer(object):
         floats = []
         floats_nonmask = []
         for idx, token in enumerate(original_tokens):
+            num = BertTokenizer.num(token)
+            if num > 1000:
+                num = 1000
             if lm_label_ids is not None:
-                # Get the floats of non-masked tokens
-                if token.startswith("[NUM]") and mod_tokens[idx] != "[MASK]":
-                    floats_nonmask.append(BertTokenizer.num(token[5:]))
+                if mod_tokens[idx] != "[MASK]":
+                    floats_nonmask.append(num)
                 else:
-                    floats_nonmask.append(0.0)
-
-                if token.startswith("[NUM]") and lm_label_ids[idx] != -1:
-                    floats.append(BertTokenizer.num(token[5:]))
-                else:
-                    floats.append(0.0)
+                    floats_nonmask.append(0)
             else:
-                if token.startswith("[NUM]"):
-                    floats_nonmask.append(BertTokenizer.num(token[5:]))
-                    floats.append(BertTokenizer.num(token[5:]))
-                else:
-                    floats_nonmask.append(0.0)
-                    floats.append(0.0)
+                floats_nonmask.append(0)
         if len(floats) > self.max_len:
             raise ValueError(
                 "Token indices sequence length is longer than the specified maximum "

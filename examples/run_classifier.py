@@ -293,13 +293,11 @@ def convert_examples_to_features(examples, label_list, max_seq_length, tokenizer
             input_ids.append(0)
             input_mask.append(0)
             segment_ids.append(0)
-            float_labels.append(0.0)
-            float_inputs.append(0.0)
+            float_inputs.append(0)
 
         assert len(input_ids) == max_seq_length
         assert len(input_mask) == max_seq_length
         assert len(segment_ids) == max_seq_length
-        assert len(float_labels) == max_seq_length
         assert len(float_inputs) == max_seq_length
 
         label_id = label_map[example.label]

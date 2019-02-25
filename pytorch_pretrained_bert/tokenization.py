@@ -22,6 +22,7 @@ import collections
 import unicodedata
 import os
 import logging
+import math
 
 from .file_utils import cached_path
 from scipy.stats import norm
@@ -119,42 +120,34 @@ class BertTokenizer(object):
                 norm.cdf(cur_next, self.mu, self.sigma) - norm.cdf(cur, self.mu, self.sigma)
             )
 
-    # Unused
-    def augment_vocab(self):
-        todo_list = ["[NUM]"]
-        for token in todo_list:
-            if token not in self.vocab:
-                self.vocab[token] = len(self.vocab)
-
     @staticmethod
     def num(text):
         try:
             cur = float(text)
-            if cur <= 0.0:
-                cur = 0.1
-            return ceil(cur)
+            return cur
         except:
-            return 0
+            return 0.0
 
     def tokenize(self, text):
         split_tokens = []
         basic_tokens = self.basic_tokenizer.tokenize(text)
         for idx, token in enumerate(basic_tokens):
-            # next_idx = min(idx + 1, len(basic_tokens) - 1)
-            # if BertTokenizer.num(token) > 0:
-            #     split_tokens.append(token)
-            #     continue
-            if BertTokenizer.num(token) > 0:
-                if token not in self.vocab:
-                    token = str(ceil(BertTokenizer.num(token)))
+            cur_num = BertTokenizer.num(token)
+            if basic_tokens[max(0, idx - 1)] == "-":
+                cur_num = -cur_num
             for sub_token in self.wordpiece_tokenizer.tokenize(token):
-                split_tokens.append(sub_token)
+                if cur_num != 0.0:
+                    split_tokens.append(sub_token + "[NUM]" + str(cur_num))
+                else:
+                    split_tokens.append(sub_token)
         return split_tokens
 
     def convert_tokens_to_ids(self, tokens):
         """Converts a sequence of tokens into ids using the vocab."""
         ids = []
         for token in tokens:
+            if "[NUM]" in token:
+                token = token.split("[NUM]")[0]
             ids.append(self.vocab[token])
         if len(ids) > self.max_len:
             raise ValueError(
@@ -164,26 +157,60 @@ class BertTokenizer(object):
             )
         return ids
 
+    def get_val_from_idx(self, idx):
+        if idx == 0:
+            return -math.exp(50.1)
+        if 1 <= idx < 1001:
+            num = -((idx - 1) * 0.1 - 50.0)
+            return -math.exp(num)
+        else:
+            num = (idx - 1001) * 0.1 - 49.9
+            return math.exp(num)
+
     def convert_tokens_to_softlabels(self, tokens, lm_label_ids):
         soft_labels = []
         for idx, token in enumerate(tokens):
-            cur = [0.0] * 1001
+            cur = [0.0] * 2001
             if lm_label_ids[idx] == -1:
                 soft_labels.append(cur)
                 continue
-
-            num = BertTokenizer.num(token)
-            if num > 1000:
-                num = 1000
-            if num > 0:
-                label = num
-                for other_label in range(max(1, num-100), min(1000, num+100)):
-                    val = 0.0
-                    if 99 > abs(label - other_label) >= 0:
-                        val = self.weight_vec[100 - label + other_label]
-                    cur[other_label] = val
-            else:
+            if "[NUM]" not in token:
                 cur[0] = 1.0
+                soft_labels.append(cur)
+                continue
+            num = BertTokenizer.num(token.split("[NUM]")[1])
+            if num == 0.0:
+                cur[0] = 1.0
+                soft_labels.append(cur)
+                continue
+            neg_sign = num < 0.0
+            if neg_sign:
+                num = -num
+            try:
+                log_bin_idx = int(math.log(num) / 0.1) + 499
+            except ValueError:
+                print("Verbosing ValueError...")
+                print(tokens)
+                print(token)
+                print(num)
+                print()
+                cur[0] = 1.0
+                soft_labels.append(cur)
+                continue
+            if log_bin_idx > 999:
+                log_bin_idx = 999
+            if log_bin_idx < 0:
+                log_bin_idx = 0
+            if neg_sign:
+                log_bin_idx = 1 + (999 - log_bin_idx)
+            else:
+                log_bin_idx = 1001 + log_bin_idx
+            mean = num
+            std = num / 10.0
+            for other_label in range(max(1, log_bin_idx-100), min(2000, log_bin_idx+100)):
+                cur[other_label] = norm.cdf(self.get_val_from_idx(other_label), mean, std) \
+                                           - \
+                                           norm.cdf(self.get_val_from_idx(other_label - 1), mean, std)
             soft_labels.append(cur)
         return soft_labels
 
@@ -193,16 +220,13 @@ class BertTokenizer(object):
         floats = []
         floats_nonmask = []
         for idx, token in enumerate(original_tokens):
-            num = BertTokenizer.num(token)
-            if num > 1000:
-                num = 1000
-            if lm_label_ids is not None:
+            if "[NUM]" in token:
                 if mod_tokens[idx] != "[MASK]":
-                    floats_nonmask.append(num)
+                    floats_nonmask.append(self.num(token.split("[NUM]")[1]))
                 else:
-                    floats_nonmask.append(0)
+                    floats_nonmask.append(0.0)
             else:
-                floats_nonmask.append(0)
+                floats_nonmask.append(0.0)
         if len(floats) > self.max_len:
             raise ValueError(
                 "Token indices sequence length is longer than the specified maximum "

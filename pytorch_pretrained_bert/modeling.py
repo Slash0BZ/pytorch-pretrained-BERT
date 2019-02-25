@@ -192,7 +192,7 @@ class BertEmbeddings(nn.Module):
         self.token_type_embeddings = nn.Embedding(config.type_vocab_size, config.hidden_size)
 
         # 1 for non-number, and 1000 bins
-        self.float_embeddings = nn.Embedding(1001, config.hidden_size)
+        self.float_embeddings = nn.Embedding(2001, config.hidden_size)
 
         # self.LayerNorm is not snake-cased to stick with TensorFlow model variable name and be able to load
         # any TensorFlow checkpoint file
@@ -206,7 +206,7 @@ class BertEmbeddings(nn.Module):
         if token_type_ids is None:
             token_type_ids = torch.zeros_like(input_ids)
 
-        float_values = torch.clamp(float_values.long(), min=0, max=1000)
+        float_values = torch.clamp(float_values.long(), min=0, max=2000)
 
         words_embeddings = self.word_embeddings(input_ids)
         position_embeddings = self.position_embeddings(position_ids)
@@ -767,10 +767,10 @@ class BertForNumericalPreTraining(PreTrainedBertModel):
             masked_lm_loss = loss_fct(prediction_scores.view(-1, self.config.vocab_size), masked_lm_labels.view(-1))
 
             value_mask = (masked_lm_labels.view(-1) != -1).nonzero().view(-1)
-            masked_lm_soft_labels = soft_labels.view(-1, 1001)[value_mask]
+            masked_lm_soft_labels = soft_labels.view(-1, 2001)[value_mask]
 
             masked_lm_loss_float = self.get_soft_float_loss(
-                float_scores.view(-1, 1001)[value_mask], masked_lm_soft_labels)
+                float_scores.view(-1, 2001)[value_mask], masked_lm_soft_labels)
 
             if self.training:
                 total_loss = masked_lm_loss + masked_lm_loss_float

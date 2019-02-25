@@ -448,7 +448,7 @@ def convert_example_to_features(example, max_seq_length, tokenizer):
         lm_label_ids.append(-1)
         float_labels.append(0.0)
         float_inputs.append(0)
-        soft_labels.append([0.0] * 1001)
+        soft_labels.append([0.0] * 2001)
 
     assert len(input_ids) == max_seq_length
     assert len(input_mask) == max_seq_length
@@ -468,12 +468,15 @@ def convert_example_to_features(example, max_seq_length, tokenizer):
         logger.info("guid: %s" % (example.guid))
         logger.info("tokens: %s" % " ".join(
                 [str(x) for x in tokens]))
+        logger.info("original tokens: %s" % " ".join(
+            [str(x) for x in tokens_orig]))
         logger.info("input_ids: %s" % " ".join([str(x) for x in input_ids]))
         logger.info("input_mask: %s" % " ".join([str(x) for x in input_mask]))
         logger.info(
                 "segment_ids: %s" % " ".join([str(x) for x in segment_ids]))
         logger.info("LM label: %s " % (lm_label_ids))
-        logger.info("Float label: %s " % (float_labels))
+        logger.info("Float input: %s " % (float_inputs))
+        # logger.info("Soft labels: %s " % (soft_labels[7]))
         logger.info("Is next sentence label: %s " % (example.is_next))
 
     features = InputFeatures(input_ids=input_ids,
@@ -717,6 +720,7 @@ def main():
                     print("LM Loss: " + str(total_lm_loss))
                     total_float_loss = 0.0
                     total_lm_loss = 0.0
+                if total_counter % 1000 == 0:
                     model_to_save = model.module if hasattr(model, 'module') else model  # Only save the model it-self
                     output_model_file = os.path.join(args.output_dir, "pytorch_model.bin" + "." + str(total_counter))
                     torch.save(model_to_save.state_dict(), output_model_file)

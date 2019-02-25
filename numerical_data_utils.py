@@ -7,6 +7,7 @@ from word2number import w2n
 from ccg_nlpy import local_pipeline
 from sklearn.preprocessing import normalize
 import numpy as np
+import math
 
 
 class ParagraphConverter:
@@ -289,6 +290,82 @@ class LineExtractor:
         for doc in self.processed_docs:
             f.write(doc + "\n")
 
+    def num(self, str_num):
+        try:
+            return float(str_num)
+        except:
+            return None
+
+    def transform_unit(self, answer):
+        max_unit_map = {
+            "second": 60.0,
+            "seconds": 60.0,
+            "minute": 60.0,
+            "minutes": 60.0,
+            "hour": 24.0,
+            "hours": 24.0,
+            "day": 7.0,
+            "days": 7.0,
+            "week": 4.0,
+            "weeks": 4.0,
+            "month": 12.0,
+            "months": 12.0,
+            "year": 100.0,
+            "years": 100.0,
+            "century": 1.0,
+            "centuries": 1.0,
+        }
+        next_unit_map = {
+            "second": "minute",
+            "seconds": "minutes",
+            "minute": "hour",
+            "minutes": "hours",
+            "hour": "day",
+            "hours": "days",
+            "day": "week",
+            "days": "weeks",
+            "week": "month",
+            "weeks": "months",
+            "month": "year",
+            "months": "years",
+            "year": "century",
+            "years": "centuries",
+        }
+        tokens = answer.split()
+        for idx, t in enumerate(tokens):
+            if idx < 1:
+                continue
+            if t in max_unit_map:
+                prev_num = self.num(tokens[idx - 1])
+                if prev_num is not None:
+                    while True:
+                        cur_num = self.num(tokens[idx - 1])
+                        unit = tokens[idx]
+                        if cur_num < max_unit_map[unit]:
+                            break
+                        cur_num /= max_unit_map[unit]
+                        cur_num = str(int(cur_num))
+                        if unit not in next_unit_map:
+                            break
+                        tokens[idx] = next_unit_map[unit]
+                        tokens[idx - 1] = cur_num
+        return " ".join(tokens)
+
+    def run_unit(self):
+        f = open(self.path, "r")
+        lines = [x.strip() for x in f.readlines()]
+        for l in lines:
+            premise = l.split("\t")[0]
+            answer = self.transform_unit(l.split("\t")[1])
+            label = l.split("\t")[2]
+            self.processed_docs.append(premise + "\t" + answer + "\t" + label)
+
+    def output_to_file_norm_unit(self, file_path):
+        f = open(file_path, "w")
+        self.run_unit()
+        for doc in self.processed_docs:
+            f.write(doc + "\n")
+
 
 class GigawordUnitStat:
 
@@ -384,7 +461,7 @@ class UnitAnalyzer:
 # extractor.output_to_file("samples/gigaword_big_normalized_01_3.txt")
 
 extractor = LineExtractor("samples/temporal_data_split/train_vanilla.txt")
-extractor.output_to_file("samples/temporal_data_split/train_normalized_3.txt")
+extractor.output_to_file_norm_unit("samples/temporal_data_split/train_norm_unit_int.txt")
 
 # unit_extractor = GigawordUnitStat("/Users/xuanyuzhou/Downloads/tmp/2doc")
 # unit_extractor.run()

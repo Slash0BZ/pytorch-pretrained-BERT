@@ -192,6 +192,32 @@ class TemporalProcessor(DataProcessor):
             examples.append(InputExample(guid=guid, text_a=text_a, text_b=text_b, label=label))
         return examples
 
+class VerbPhysicsProcessor(DataProcessor):
+
+    def get_train_examples(self, data_dir):
+        f = open(os.path.join(data_dir, "train.txt"), "r")
+        lines = [x.strip() for x in f.readlines()]
+        return self._create_examples(lines, "train")
+
+    def get_dev_examples(self, data_dir):
+        f = open(os.path.join(data_dir, "test.txt"), "r")
+        lines = [x.strip() for x in f.readlines()]
+        return self._create_examples(lines, "dev")
+
+    def get_labels(self):
+        return ["smaller", "same", "larger", "unknown"]
+
+    def _create_examples(self, lines, type):
+        examples = []
+        for (i, line) in enumerate(lines):
+            group = line.split("\t")
+            guid = "%s-%s" % (type, i)
+            text_a = group[0]
+            text_b = group[1]
+            label = group[2]
+            examples.append(InputExample(guid=guid, text_a=text_a, text_b=text_b, label=label))
+        return examples
+
 class ColaProcessor(DataProcessor):
     """Processor for the CoLA data set (GLUE version)."""
 
@@ -475,6 +501,7 @@ def main():
         "mnli": MnliProcessor,
         "mrpc": MrpcProcessor,
         "temporal": TemporalProcessor,
+        "vb": VerbPhysicsProcessor,
     }
 
     if args.local_rank == -1 or args.no_cuda:

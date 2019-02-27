@@ -25,17 +25,22 @@ class VerbPhysicsObjectReader:
             rigidness_val = int(groups[10])
             speed_agree = int(groups[11])
             speed_val = int(groups[12])
+            self.pairs.append([obj_1, obj_2, "size", size_val])
+            self.pairs.append([obj_1, obj_2, "weight", weight_val])
+            self.pairs.append([obj_1, obj_2, "strength", strength_val])
+            self.pairs.append([obj_1, obj_2, "rigidness", rigidness_val])
+            self.pairs.append([obj_1, obj_2, "speed", speed_val])
 
-            if size_agree == 3 and size_val != -42:
-                self.pairs.append([obj_1, obj_2, "size", size_val])
-            if weight_agree == 3 and weight_val != -42:
-                self.pairs.append([obj_1, obj_2, "weight", weight_val])
-            if strength_agree == 3 and strength_val != -42:
-                self.pairs.append([obj_1, obj_2, "strength", strength_val])
-            if rigidness_agree == 3 and rigidness_val != -42:
-                self.pairs.append([obj_1, obj_2, "rigidness", rigidness_val])
-            if speed_agree == 3 and speed_val != -42:
-                self.pairs.append([obj_1, obj_2, "speed", speed_val])
+            # if size_agree == 3 and size_val != -42:
+            #     self.pairs.append([obj_1, obj_2, "size", size_val])
+            # if weight_agree == 3 and weight_val != -42:
+            #     self.pairs.append([obj_1, obj_2, "weight", weight_val])
+            # if strength_agree == 3 and strength_val != -42:
+            #     self.pairs.append([obj_1, obj_2, "strength", strength_val])
+            # if rigidness_agree == 3 and rigidness_val != -42:
+            #     self.pairs.append([obj_1, obj_2, "rigidness", rigidness_val])
+            # if speed_agree == 3 and speed_val != -42:
+            #     self.pairs.append([obj_1, obj_2, "speed", speed_val])
 
 
 class Runner:
@@ -51,28 +56,32 @@ class Runner:
         for p in self.train_set.pairs + self.dev_set.pairs:
             if p[2] != "weight":
                 continue
-            l = p[0] + " weights [MASK] [MASK]."
-            l += "\t" + p[1] + " weights [MASK] [MASK].\t"
+            l = p[0] + " weights [MASK] [MASK] ."
+            l += "\t" + p[1] + " weights [MASK] [MASK] .\t"
             if int(p[3]) == -1:
                 l += "larger"
             elif int(p[3]) == 0:
                 l += "same"
-            else:
+            elif int(p[3]) == 1:
                 l += "smaller"
+            else:
+                l += "unknown"
 
             f_train.write(l + "\n")
 
         for p in self.test_set.pairs:
             if p[2] != "weight":
                 continue
-            l = p[0] + " weights [MASK] [MASK]."
-            l += "\t" + p[1] + " weights [MASK] [MASK].\t"
+            l = p[0] + " weights [MASK] [MASK] ."
+            l += "\t" + p[1] + " weights [MASK] [MASK] .\t"
             if int(p[3]) == -1:
                 l += "larger"
             elif int(p[3]) == 0:
                 l += "same"
-            else:
+            elif int(p[3]) == 1:
                 l += "smaller"
+            else:
+                l += "unknown"
 
             f_test.write(l + "\n")
 

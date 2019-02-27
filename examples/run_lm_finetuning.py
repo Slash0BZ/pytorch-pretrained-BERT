@@ -309,32 +309,14 @@ def random_word(tokens, tokenizer):
     """
     output_label = []
 
-    valid_target = False
     for i, token in enumerate(tokens):
         prob = random.random()
         # mask token with 15% probability
-        # [NUM] has 75% probability
-        if BertTokenizer.num(token) > 0:
-            # prob = 0.1
-            # if valid_target:
-            #     prob = 1.0
-            # else:
-            #     prob = 0.1
+        # [NUM] has 50% probability
+        if "[NUM]" in token:
             prob = random.uniform(0.0, 0.3)
-        elif token in ["work", "home", "breakfast", "lunch", "sleep"]:
-            pass
-            # prob = 1.0
-            # prob = random.uniform(0.0, 0.30)
-        elif token in ["useless"]:
-            pass
-            # prob = 1.0
-            # prob = 0.1
-        else:
-            pass
-            # prob = 1.0
-            # prob = random.random()
+
         if prob < 0.15:
-            valid_target = True
             prob /= 0.15
 
             # 80% randomly change token to mask token
@@ -463,7 +445,7 @@ def convert_example_to_features(example, max_seq_length, tokenizer):
     # print(float_labels)
     # print()
 
-    if example.guid < 5:
+    if example.guid < 10:
         logger.info("*** Example ***")
         logger.info("guid: %s" % (example.guid))
         logger.info("tokens: %s" % " ".join(
@@ -620,7 +602,7 @@ def main():
 
     # Prepare model
     model = BertForNumericalPreTraining.from_pretrained(args.bert_model)
-    # model = BertForNumericalPreTraining(model.config)
+    model = BertForNumericalPreTraining(model.config)
     # Uncomment if use non-pretrained models
     # model.bert = BertModel(model.config)
     # model.cls = BertPreTrainingHeads(model.config, model.bert.embeddings.word_embeddings.weight)

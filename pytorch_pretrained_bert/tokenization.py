@@ -133,13 +133,14 @@ class BertTokenizer(object):
         basic_tokens = self.basic_tokenizer.tokenize(text)
         for idx, token in enumerate(basic_tokens):
             cur_num = BertTokenizer.num(token)
-            if basic_tokens[max(0, idx - 1)] == "-":
-                cur_num = -cur_num
+            if cur_num != 0.0:
+                split_tokens.append("[unused500][NUM]" + str(cur_num))
+                continue
+            if token.lower() == "[mask]":
+                split_tokens.append("[MASK]")
+                continue
             for sub_token in self.wordpiece_tokenizer.tokenize(token):
-                if cur_num != 0.0:
-                    split_tokens.append(sub_token + "[NUM]" + str(cur_num))
-                else:
-                    split_tokens.append(sub_token)
+                split_tokens.append(sub_token)
         return split_tokens
 
     def convert_tokens_to_ids(self, tokens):
@@ -188,7 +189,8 @@ class BertTokenizer(object):
                 num = -num
             try:
                 log_bin_idx = int(math.log(num) / 0.1) + 499
-            except ValueError:
+            except Exception as e:
+                print(e)
                 print("Verbosing ValueError...")
                 print(tokens)
                 print(token)
@@ -311,6 +313,9 @@ class BasicTokenizer(object):
             if self.do_lower_case and token not in self.never_split:
                 token = token.lower()
                 token = self._run_strip_accents(token)
+            if token == "[MASK]":
+                split_tokens.append(token)
+                continue
             split_tokens.extend(self._run_split_on_punc(token))
 
         output_tokens = whitespace_tokenize(" ".join(split_tokens))

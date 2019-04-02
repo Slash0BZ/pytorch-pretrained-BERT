@@ -23,8 +23,10 @@ import collections
 import logging
 import json
 import re
+import math
 
 import torch
+from word2number import w2n
 from torch.utils.data import TensorDataset, DataLoader, SequentialSampler
 from torch.utils.data.distributed import DistributedSampler
 
@@ -196,6 +198,33 @@ def read_examples(input_file):
             unique_id += 1
     return examples
 
+def get_val_from_idx(idx):
+    if idx == 0:
+        return 0.0
+    if 1 <= idx < 1001:
+        num = -((idx - 1) * 0.1 - 50.0)
+        return -math.exp(num)
+    else:
+        num = (idx - 1001) * 0.1 - 49.9
+        return math.exp(num)
+
+def num(word):
+    try:
+        return float(word)
+    except:
+        return None
+
+def word2num_raw(word):
+    try:
+        return w2n.word_to_num(word)
+    except:
+        return None
+
+def get_value(word):
+    n = num(word)
+    if n is None:
+        return word2num_raw(word)
+    return n
 
 def main():
     parser = argparse.ArgumentParser()
@@ -246,6 +275,7 @@ def main():
         unique_id_to_feature[feature.unique_id] = feature
 
     model = BertForNumericalPreTraining.from_pretrained(args.bert_model)
+    # model = BertForNumericalPreTraining.from_pretrained("bert-base-uncased")
     model.to(device)
 
     if args.local_rank != -1:
@@ -285,17 +315,28 @@ def main():
                 for (i, token) in enumerate(feature.tokens):
                     if token != "[MASK]":
                         continue
-                    print(token)
                     lm_scores_item = lm_scores[b][i]
                     float_scores_item = float_scores[b][i]
                     # predicted_float = torch.sum(float_vec[b][i][0:16])
                     lm_chosen = torch.argmax(lm_scores_item).item()
+                    _, lm_chosen_ranked = torch.topk(lm_scores_item, 50)
+                    lm_chosen_ranked = lm_chosen_ranked.cpu().tolist()
+                    value = 21.0
+                    for lmi in lm_chosen_ranked:
+                        word = tokenizer.ids_to_tokens[lmi]
+                        n = get_value(word)
+                        if n is not None:
+                            value = n
+                            break
+                    # writer.write(str(value) + "\n")
+
                     float_chosen = torch.argmax(float_scores_item).item()
-                    for j in range(-100, 0):
-                        print(str(float_chosen + j) + " score " + str(float_scores_item[float_chosen + j]))
-                    print(str(float_chosen) + " score " + str(float_scores_item[float_chosen]))
-                    for j in range(1, 100):
-                        print(str(float_chosen + j) + " score " + str(float_scores_item[float_chosen + j]))
+                    _, top_indices = torch.topk(float_scores_item, 2)
+                    top_indices = top_indices.cpu().tolist()
+                    if float_chosen == 0:
+                        float_chosen = top_indices[1]
+                    writer.write(str(get_val_from_idx(float_chosen)) + "\n")
+
                     predicted_token = tokenizer.ids_to_tokens[lm_chosen]
                     out_features = collections.OrderedDict()
                     out_features["token"] = token
@@ -303,7 +344,7 @@ def main():
                     # out_features["predicted_float"] = [predicted_float.item()]
                     all_out_features.append(out_features)
                 output_json["features"] = all_out_features
-                writer.write(json.dumps(output_json) + "\n")
+                # writer.write(json.dumps(output_json) + "\n")
 
 
 if __name__ == "__main__":

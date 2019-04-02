@@ -124,6 +124,8 @@ class BertTokenizer(object):
     def num(text):
         try:
             cur = float(text)
+            if math.isnan(cur) or math.isinf(cur):
+                cur = 0.0
             return cur
         except:
             return 0.0
@@ -133,9 +135,9 @@ class BertTokenizer(object):
         basic_tokens = self.basic_tokenizer.tokenize(text)
         for idx, token in enumerate(basic_tokens):
             cur_num = BertTokenizer.num(token)
-            if cur_num != 0.0:
-                split_tokens.append("[unused500][NUM]" + str(cur_num))
-                continue
+            # if cur_num != 0.0:
+            #     split_tokens.append("[unused500][NUM]" + str(cur_num))
+            #     continue
             if token.lower() == "[mask]":
                 split_tokens.append("[MASK]")
                 continue
@@ -216,6 +218,18 @@ class BertTokenizer(object):
             soft_labels.append(cur)
         return soft_labels
 
+    def convert_tokens_to_single_float(self, original_tokens):
+        insert_num = False
+        ret_num = 0.0
+        for token in original_tokens:
+            if token == "[SEP]":
+                insert_num = True
+            if insert_num and self.num(token) != 0.0:
+                ret_num = self.num(token)
+            if insert_num and (token == "a" or token == "an"):
+                ret_num = 1.0
+        return ret_num
+
     def convert_tokens_to_floats(self, original_tokens, lm_label_ids=None, mod_tokens=None):
         if lm_label_ids is not None:
             assert(len(original_tokens) == len(lm_label_ids))
@@ -223,6 +237,9 @@ class BertTokenizer(object):
         floats_nonmask = []
         for idx, token in enumerate(original_tokens):
             if "[NUM]" in token:
+                if mod_tokens is None:
+                    floats_nonmask.append(0.0)
+                    continue
                 if mod_tokens[idx] != "[MASK]":
                     floats_nonmask.append(self.num(token.split("[NUM]")[1]))
                 else:
@@ -343,7 +360,8 @@ class BasicTokenizer(object):
         while i < len(chars):
             char = chars[i]
             next_idx = min(len(chars) - 1, i + 1)
-            if _is_punctuation(char) and not chars[next_idx].isdigit():
+            # if _is_punctuation(char) and not chars[next_idx].isdigit():
+            if _is_punctuation(char):
                 output.append([char])
                 start_new_word = True
             else:

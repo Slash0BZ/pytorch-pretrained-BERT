@@ -213,7 +213,8 @@ class BertEmbeddings(nn.Module):
         token_type_embeddings = self.token_type_embeddings(token_type_ids)
         float_embeddings = self.float_embeddings(float_values)
 
-        embeddings = words_embeddings + float_embeddings + position_embeddings + token_type_embeddings
+        # embeddings = words_embeddings + float_embeddings + position_embeddings + token_type_embeddings
+        embeddings = words_embeddings + position_embeddings + token_type_embeddings
 
         embeddings = self.LayerNorm(embeddings)
         embeddings = self.dropout(embeddings)
@@ -1020,12 +1021,12 @@ class BertForSequenceClassification(PreTrainedBertModel):
     logits = model(input_ids, token_type_ids, input_mask)
     ```
     """
-    def __init__(self, config, num_labels=4):
+    def __init__(self, config, num_labels=2):
         super(BertForSequenceClassification, self).__init__(config)
         self.num_labels = num_labels
         self.bert = BertModel(config)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        self.classifier = nn.Linear(config.hidden_size, num_labels)
+        self.classifier = nn.Linear(config.hidden_size + 1, num_labels)
         self.apply(self.init_bert_weights)
 
     def forward(self, input_ids, token_type_ids=None, attention_mask=None, labels=None, float_inputs=None):
@@ -1033,7 +1034,9 @@ class BertForSequenceClassification(PreTrainedBertModel):
                                         output_all_encoded_layers=False,
                                         float_inputs=float_inputs)
         pooled_output = self.dropout(pooled_output)
-        logits = self.classifier(pooled_output)
+        num_input = torch.unsqueeze(float_inputs, dim=1)
+        logits = self.classifier(torch.cat((pooled_output, num_input), dim=1))
+        # logits = self.classifier(pooled_output)
 
         if labels is not None:
             loss_fct = CrossEntropyLoss()

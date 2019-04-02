@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 class InputExample(object):
     """A single training/test example for simple sequence classification."""
 
-    def __init__(self, guid, text_a, text_b=None, label=None):
+    def __init__(self, guid, text_a, text_b=None, label=None, input_num=None):
         """Constructs a InputExample.
 
         Args:
@@ -59,18 +59,18 @@ class InputExample(object):
         self.guid = guid
         self.text_a = text_a
         self.text_b = text_b
+        self.input_num = input_num
         self.label = label
 
 
 class InputFeatures(object):
     """A single set of features of data."""
 
-    def __init__(self, input_ids, input_mask, segment_ids, label_id, float_labels, float_inputs):
+    def __init__(self, input_ids, input_mask, segment_ids, label_id, float_inputs):
         self.input_ids = input_ids
         self.input_mask = input_mask
         self.segment_ids = segment_ids
         self.label_id = label_id
-        self.float_labels = float_labels
         self.float_inputs = float_inputs
 
 
@@ -186,10 +186,11 @@ class TemporalProcessor(DataProcessor):
         for (i, line) in enumerate(lines):
             group = line.split("\t")
             guid = "%s-%s" % (type, i)
-            text_a = group[0]
-            text_b = group[1]
-            label = group[2]
-            examples.append(InputExample(guid=guid, text_a=text_a, text_b=text_b, label=label))
+            text_a = group[0] + " " + group[1]
+            text_b = group[2]
+            label = group[3]
+            input_num = float(group[4])
+            examples.append(InputExample(guid=guid, text_a=text_a, text_b=text_b, label=label, input_num=input_num))
         return examples
 
 class VerbPhysicsProcessor(DataProcessor):
@@ -308,7 +309,8 @@ def convert_examples_to_features(examples, label_list, max_seq_length, tokenizer
             segment_ids.append(1)
 
         input_ids = tokenizer.convert_tokens_to_ids(tokens)
-        float_labels, float_inputs = tokenizer.convert_tokens_to_floats(tokens)
+        # float_labels, float_inputs = tokenizer.convert_tokens_to_floats(tokens)
+        float_input_single = tokenizer.convert_tokens_to_single_float(tokens)
 
         # The mask has 1 for real tokens and 0 for padding tokens. Only real
         # tokens are attended to.
@@ -319,12 +321,12 @@ def convert_examples_to_features(examples, label_list, max_seq_length, tokenizer
             input_ids.append(0)
             input_mask.append(0)
             segment_ids.append(0)
-            float_inputs.append(0)
+            # float_inputs.append(0)
 
         assert len(input_ids) == max_seq_length
         assert len(input_mask) == max_seq_length
         assert len(segment_ids) == max_seq_length
-        assert len(float_inputs) == max_seq_length
+        # assert len(float_inputs) == max_seq_length
 
         label_id = label_map[example.label]
         if ex_index < 5:
@@ -343,8 +345,7 @@ def convert_examples_to_features(examples, label_list, max_seq_length, tokenizer
                               input_mask=input_mask,
                               segment_ids=segment_ids,
                               label_id=label_id,
-                              float_labels=float_labels,
-                              float_inputs=float_inputs))
+                              float_inputs=example.input_num))
     return features
 
 
@@ -599,7 +600,7 @@ def main():
         all_input_mask = torch.tensor([f.input_mask for f in train_features], dtype=torch.long)
         all_segment_ids = torch.tensor([f.segment_ids for f in train_features], dtype=torch.long)
         all_label_ids = torch.tensor([f.label_id for f in train_features], dtype=torch.long)
-        all_float_inputs = torch.tensor([f.float_inputs for f in train_features], dtype=torch.long)
+        all_float_inputs = torch.tensor([f.float_inputs for f in train_features], dtype=torch.float)
         train_data = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_label_ids, all_float_inputs)
         if args.local_rank == -1:
             train_sampler = RandomSampler(train_data)
@@ -658,7 +659,7 @@ def main():
         all_input_mask = torch.tensor([f.input_mask for f in eval_features], dtype=torch.long)
         all_segment_ids = torch.tensor([f.segment_ids for f in eval_features], dtype=torch.long)
         all_label_ids = torch.tensor([f.label_id for f in eval_features], dtype=torch.long)
-        all_float_inputs = torch.tensor([f.float_inputs for f in eval_features], dtype=torch.long)
+        all_float_inputs = torch.tensor([f.float_inputs for f in eval_features], dtype=torch.float)
         eval_data = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_label_ids, all_float_inputs)
         # Run prediction for full data
         eval_sampler = SequentialSampler(eval_data)

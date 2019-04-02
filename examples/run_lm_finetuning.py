@@ -313,6 +313,7 @@ def random_word(tokens, tokenizer):
         prob = random.random()
         # mask token with 15% probability
         # [NUM] has 50% probability
+        # if BertTokenizer.num(token) != 0:
         if "[NUM]" in token:
             prob = random.uniform(0.0, 0.3)
 
@@ -602,7 +603,7 @@ def main():
 
     # Prepare model
     model = BertForNumericalPreTraining.from_pretrained(args.bert_model)
-    model = BertForNumericalPreTraining(model.config)
+    # model = BertForNumericalPreTraining(model.config)
     # Uncomment if use non-pretrained models
     # model.bert = BertModel(model.config)
     # model.cls = BertPreTrainingHeads(model.config, model.bert.embeddings.word_embeddings.weight)

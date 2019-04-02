@@ -1,6 +1,8 @@
 import sys
 import os
 import random
+import statistics
+import math
 from gensim.corpora import WikiCorpus
 from ccg_nlpy import local_pipeline
 from word2number import w2n
@@ -11,7 +13,8 @@ class TextProcessor:
     def __init__(self):
         self.pipeline = local_pipeline.LocalPipeline()
 
-    def num(self, n):
+    @staticmethod
+    def num(n):
         try:
             return float(n)
         except:
@@ -178,4 +181,45 @@ def split_all_data():
             f_eval.write(line.lower() + "\n")
 
 
-split_all_data()
+def gen_test_data():
+    f = open("samples/wiki-25/eval.txt", "r")
+    f_out_maksed = open("samples/wiki-25/eval-input.txt", "w")
+    f_out_gold = open("samples/wiki-25/eval-answer.txt", "w")
+    inst_id = 1
+    lines = [x.strip() for x in f.readlines()]
+    for line in lines:
+        tokens = line.split(" ")
+        for idx, t in enumerate(tokens):
+            # ensure no "[MASK]" previously exists
+            if tokens[idx] == "[MASK]":
+                tokens[idx] == ""
+            n = TextProcessor.num(t)
+            if n is not None and not math.isnan(n) and not math.isinf(n) and n != 0.0:
+                tokens[idx] = "[MASK]"
+                f_out_gold.write(str(n) + "\n")
+                inst_id += 1
+        f_out_maksed.write(" ".join(tokens) + "\n")
+
+
+def create_dummy_predictions():
+    f = open("samples/wiki-25/train.txt", "r")
+    lines = [x.strip() for x in f.readlines()]
+    all_nums = []
+    eval_count = 2444819
+    for line in lines:
+        tokens = line.split(" ")
+        for idx, t in enumerate(tokens):
+            n = TextProcessor.num(t)
+            if n is not None and not math.isnan(n) and not math.isinf(n) and n != 0.0:
+                all_nums.append(float(n))
+    f_out_mean = open("samples/wiki-25/prediction/mean.txt", "w")
+    f_out_median = open("samples/wiki-25/prediction/median.txt", "w")
+
+    mean = statistics.mean(all_nums)
+    median = statistics.median(all_nums)
+    for i in range(0, eval_count):
+        f_out_mean.write(str(mean) + "\n")
+        f_out_median.write(str(median) + "\n")
+
+# gen_test_data()
+create_dummy_predictions()

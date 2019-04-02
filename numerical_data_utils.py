@@ -331,7 +331,24 @@ class LineExtractor:
             "year": "century",
             "years": "centuries",
         }
+        prev_unit_map = {
+            "minute": "second",
+            "minutes": "seconds",
+            "hour": "minute",
+            "hours": "minutes",
+            "day": "hour",
+            "days": "hours",
+            "week": "day",
+            "weeks": "days",
+            "month": "week",
+            "months": "weeks",
+            "year": "month",
+            "years": "months",
+            "century": "year",
+            "centuries": "years",
+        }
         tokens = answer.split()
+        ret_num = 0.0
         for idx, t in enumerate(tokens):
             if idx < 1:
                 continue
@@ -342,23 +359,55 @@ class LineExtractor:
                         cur_num = self.num(tokens[idx - 1])
                         unit = tokens[idx]
                         if cur_num < max_unit_map[unit]:
+                            ret_num = float(cur_num) / max_unit_map[unit]
                             break
                         cur_num /= max_unit_map[unit]
-                        cur_num = str(int(cur_num))
+                        if int(cur_num) == cur_num:
+                            cur_num = int(cur_num)
+                        else:
+                            cur_num = round(cur_num, 1)
+                        cur_num = str(cur_num)
                         if unit not in next_unit_map:
+                            ret_num = 1.0
                             break
                         tokens[idx] = next_unit_map[unit]
                         tokens[idx - 1] = cur_num
-        return " ".join(tokens)
+
+        for idx, t in enumerate(tokens):
+            if idx < 1:
+                continue
+            if t in max_unit_map:
+                prev_num = self.num(tokens[idx - 1])
+                if prev_num is not None:
+                    while True:
+                        cur_num = self.num(tokens[idx - 1])
+                        unit = tokens[idx]
+                        if cur_num > 1.0:
+                            ret_num = float(cur_num) / max_unit_map[unit]
+                            break
+                        if unit not in prev_unit_map:
+                            ret_num = 1.0
+                            break
+                        cur_num *= max_unit_map[prev_unit_map[unit]]
+                        if int(cur_num) == cur_num:
+                            cur_num = int(cur_num)
+                        else:
+                            cur_num = round(cur_num, 1)
+                        cur_num = str(cur_num)
+                        tokens[idx] = prev_unit_map[unit]
+                        tokens[idx - 1] = cur_num
+
+        return " ".join(tokens), ret_num
 
     def run_unit(self):
         f = open(self.path, "r")
         lines = [x.strip() for x in f.readlines()]
         for l in lines:
             premise = l.split("\t")[0]
-            answer = self.transform_unit(l.split("\t")[1])
-            label = l.split("\t")[2]
-            self.processed_docs.append(premise + "\t" + answer + "\t" + label)
+            question = l.split("\t")[1]
+            answer, answer_num = self.transform_unit(l.split("\t")[2])
+            label = l.split("\t")[3]
+            self.processed_docs.append(premise + "\t" + question + "\t" + answer + "\t" + label + "\t" + str(answer_num))
 
     def output_to_file_norm_unit(self, file_path):
         f = open(file_path, "w")
@@ -460,8 +509,8 @@ class UnitAnalyzer:
 # extractor = GigawordExtractor("/Users/xuanyuzhou/Downloads/tmp/2doc")
 # extractor.output_to_file("samples/gigaword_big_normalized_01_3.txt")
 
-extractor = LineExtractor("samples/temporal_data_split/train_vanilla.txt")
-extractor.output_to_file_norm_unit("samples/temporal_data_split/train_norm_unit_int.txt")
+extractor = LineExtractor("samples/split_30_70_good/test.txt")
+extractor.output_to_file_norm_unit("samples/split_30_70_good/tes_norm_unit.txt")
 
 # unit_extractor = GigawordUnitStat("/Users/xuanyuzhou/Downloads/tmp/2doc")
 # unit_extractor.run()

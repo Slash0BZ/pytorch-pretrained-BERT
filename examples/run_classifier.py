@@ -31,12 +31,12 @@ from torch.utils.data import (DataLoader, RandomSampler, SequentialSampler,
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm, trange
 
-from torch.nn import CrossEntropyLoss, MSELoss
+from torch.nn import CrossEntropyLoss, MSELoss, BCEWithLogitsLoss
 from scipy.stats import pearsonr, spearmanr
 from sklearn.metrics import matthews_corrcoef, f1_score
 
 from pytorch_pretrained_bert.file_utils import PYTORCH_PRETRAINED_BERT_CACHE
-from pytorch_pretrained_bert.modeling import BertForSequenceClassification, BertConfig, WEIGHTS_NAME, CONFIG_NAME
+from pytorch_pretrained_bert.modeling import BertForTemporalClassification, BertConfig, WEIGHTS_NAME, CONFIG_NAME
 from pytorch_pretrained_bert.tokenization import BertTokenizer
 from pytorch_pretrained_bert.optimization import BertAdam, warmup_linear
 
@@ -49,7 +49,7 @@ logger = logging.getLogger(__name__)
 class InputExample(object):
     """A single training/test example for simple sequence classification."""
 
-    def __init__(self, guid, text_a, text_b=None, label=None):
+    def __init__(self, guid, text_a, text_b=None, label=None, target_idx=0):
         """Constructs a InputExample.
 
         Args:
@@ -65,16 +65,18 @@ class InputExample(object):
         self.text_a = text_a
         self.text_b = text_b
         self.label = label
+        self.target_idx = target_idx
 
 
 class InputFeatures(object):
     """A single set of features of data."""
 
-    def __init__(self, input_ids, input_mask, segment_ids, label_id):
+    def __init__(self, input_ids, input_mask, segment_ids, label_id, target_idx=0):
         self.input_ids = input_ids
         self.input_mask = input_mask
         self.segment_ids = segment_ids
         self.label_id = label_id
+        self.target_idx = target_idx
 
 
 class DataProcessor(object):
@@ -135,6 +137,90 @@ class MrpcProcessor(DataProcessor):
             label = line[0]
             examples.append(
                 InputExample(guid=guid, text_a=text_a, text_b=text_b, label=label))
+        return examples
+
+
+class AnimalProcessor(DataProcessor):
+
+    def get_train_examples(self, data_dir):
+        """See base class."""
+        f = open(os.path.join(data_dir, "train.txt"), "r")
+        lines = [x.strip() for x in f.readlines()]
+        return self._create_examples(lines, "train")
+
+    def get_dev_examples(self, data_dir):
+        f = open(os.path.join(data_dir, "eval.txt"), "r")
+        lines = [x.strip() for x in f.readlines()]
+        return self._create_examples(lines, "dev")
+
+    def get_labels(self):
+        return [None]
+
+    def _create_examples(self, lines, set_type):
+        """Creates examples for the training and dev sets."""
+        examples = []
+        for (i, line) in enumerate(lines):
+            groups = line.split("\t")
+            guid = "%s-%s" % (set_type, i)
+            text_a = groups[0]
+            label = groups[1]
+            examples.append(
+                InputExample(guid=guid, text_a=text_a, label=label))
+        return examples
+
+
+class TemporalNominalProcessor(DataProcessor):
+
+    def get_train_examples(self, data_dir):
+        """See base class."""
+        f = open(os.path.join(data_dir, "train.txt"), "r")
+        lines = [x.strip() for x in f.readlines()]
+        return self._create_examples(lines, "train")
+
+    def get_dev_examples(self, data_dir):
+        f = open(os.path.join(data_dir, "test.txt"), "r")
+        lines = [x.strip() for x in f.readlines()]
+        return self._create_examples(lines, "dev")
+
+    def get_labels(self):
+        return [str(x) for x in range(161)]
+
+    def _create_examples(self, lines, set_type):
+        """Creates examples for the training and dev sets."""
+        examples = []
+        unit_map = {
+            "second": 0.0,
+            "seconds": 0.0,
+            "minute": 1.0,
+            "minutes": 1.0,
+            "hour": 2.0,
+            "hours": 2.0,
+            "day": 3.0,
+            "days": 3.0,
+            "week": 4.0,
+            "weeks": 4.0,
+            "month": 5.0,
+            "months": 5.0,
+            "year": 6.0,
+            "years": 6.0,
+            "century": 7.0,
+            "centuries": 7.0,
+        }
+        for (i, line) in enumerate(lines):
+            groups = line.split("\t")
+            guid = "%s-%s" % (set_type, i)
+            text_a = groups[0]
+            target_idx = int(groups[1])
+            label_raw = groups[2]
+            label_num = float(label_raw.split(" ")[0])
+            if label_num < 0.0:
+                label_num = 0.0
+            if label_num > 100.0:
+                label_num = 100.0
+            label_unit = label_raw.split(" ")[1].lower()
+            label_idx = unit_map[label_unit] * 20.0 + label_num / 5.0
+            examples.append(
+                InputExample(guid=guid, text_a=text_a, label=str(int(label_idx)), target_idx=target_idx))
         return examples
 
 
@@ -493,7 +579,8 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
                 InputFeatures(input_ids=input_ids,
                               input_mask=input_mask,
                               segment_ids=segment_ids,
-                              label_id=label_id))
+                              label_id=label_id,
+                              target_idx=example.target_idx))
     return features
 
 
@@ -515,16 +602,20 @@ def _truncate_seq_pair(tokens_a, tokens_b, max_length):
 
 
 def simple_accuracy(preds, labels):
-    return (preds == labels).mean()
+    correct = 0.0
+    for i, v in enumerate(preds):
+        if labels[i] - 3 <= preds[i] <= labels[i] + 3:
+            correct += 1.0
+    return correct / float(len(preds))
 
 
 def acc_and_f1(preds, labels):
     acc = simple_accuracy(preds, labels)
-    f1 = f1_score(y_true=labels, y_pred=preds)
+    # f1 = f1_score(y_true=labels, y_pred=preds)
     return {
         "acc": acc,
-        "f1": f1,
-        "acc_and_f1": (acc + f1) / 2,
+        # "f1": f1,
+        # "acc_and_f1": (acc + f1) / 2,
     }
 
 
@@ -535,6 +626,25 @@ def pearson_and_spearman(preds, labels):
         "pearson": pearson_corr,
         "spearmanr": spearman_corr,
         "corr": (pearson_corr + spearman_corr) / 2,
+    }
+
+
+def avg_hit_loss(preds, labels):
+    hit_10 = 0.0
+    hit_20 = 0.0
+    hit_30 = 0.0
+    for (i, v) in enumerate(preds):
+        if v * 0.9 <= labels[i] <= v * 1.1:
+            hit_10 += 1.0
+        if v * 0.8 <= labels[i] <= v * 1.2:
+            hit_20 += 1.0
+        if v * 0.7 <= labels[i] <= v * 1.3:
+            hit_30 += 1.0
+
+    return {
+        "10% acc: ": hit_10 / float(len(preds)),
+        "20% acc: ": hit_20 / float(len(preds)),
+        "30% acc: ": hit_30 / float(len(preds)),
     }
 
 
@@ -560,6 +670,10 @@ def compute_metrics(task_name, preds, labels):
         return {"acc": simple_accuracy(preds, labels)}
     elif task_name == "wnli":
         return {"acc": simple_accuracy(preds, labels)}
+    elif task_name == "animal":
+        return avg_hit_loss(preds, labels)
+    elif task_name == "temporalnom":
+        return acc_and_f1(preds, labels)
     else:
         raise KeyError(task_name)
 
@@ -674,6 +788,8 @@ def main():
         "qnli": QnliProcessor,
         "rte": RteProcessor,
         "wnli": WnliProcessor,
+        "animal": AnimalProcessor,
+        "temporalnom": TemporalNominalProcessor,
     }
 
     output_modes = {
@@ -686,6 +802,8 @@ def main():
         "qnli": "classification",
         "rte": "classification",
         "wnli": "classification",
+        "animal": "regression",
+        "temporalnom": "classification",
     }
 
     if args.local_rank == -1 or args.no_cuda:
@@ -744,7 +862,7 @@ def main():
 
     # Prepare model
     cache_dir = args.cache_dir if args.cache_dir else os.path.join(str(PYTORCH_PRETRAINED_BERT_CACHE), 'distributed_{}'.format(args.local_rank))
-    model = BertForSequenceClassification.from_pretrained(args.bert_model,
+    model = BertForTemporalClassification.from_pretrained(args.bert_model,
               cache_dir=cache_dir,
               num_labels=num_labels)
     if args.fp16:
@@ -802,13 +920,14 @@ def main():
         all_input_ids = torch.tensor([f.input_ids for f in train_features], dtype=torch.long)
         all_input_mask = torch.tensor([f.input_mask for f in train_features], dtype=torch.long)
         all_segment_ids = torch.tensor([f.segment_ids for f in train_features], dtype=torch.long)
+        all_target_idxs = torch.tensor([f.target_idx for f in train_features], dtype=torch.long)
 
         if output_mode == "classification":
             all_label_ids = torch.tensor([f.label_id for f in train_features], dtype=torch.long)
         elif output_mode == "regression":
             all_label_ids = torch.tensor([f.label_id for f in train_features], dtype=torch.float)
 
-        train_data = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_label_ids)
+        train_data = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_label_ids, all_target_idxs)
         if args.local_rank == -1:
             train_sampler = RandomSampler(train_data)
         else:
@@ -821,13 +940,18 @@ def main():
             nb_tr_examples, nb_tr_steps = 0, 0
             for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration")):
                 batch = tuple(t.to(device) for t in batch)
-                input_ids, input_mask, segment_ids, label_ids = batch
+                input_ids, input_mask, segment_ids, label_ids, target_idxs = batch
 
                 # define a new function to compute loss values for both output_modes
-                logits = model(input_ids, segment_ids, input_mask, labels=None)
+                logits = model(input_ids, segment_ids, input_mask, labels=None, target_idx=target_idxs)
 
                 if output_mode == "classification":
                     loss_fct = CrossEntropyLoss()
+                    # loss_fct = BCEWithLogitsLoss()
+                    # label_onehot = torch.FloatTensor(logits.view(-1, num_labels).size(0), num_labels).cuda()
+                    # label_onehot.zero_()
+                    # label_onehot.scatter_(1, label_ids.view(-1, 1), 1)
+                    # loss = loss_fct(logits.view(-1, num_labels), label_onehot.view(-1, num_labels))
                     loss = loss_fct(logits.view(-1, num_labels), label_ids.view(-1))
                 elif output_mode == "regression":
                     loss_fct = MSELoss()
@@ -844,8 +968,17 @@ def main():
                     loss.backward()
 
                 tr_loss += loss.item()
+                print("Loss: " + str(loss.item()))
                 nb_tr_examples += input_ids.size(0)
                 nb_tr_steps += 1
+                if step % 100:
+                    model_to_save = model.module if hasattr(model, 'module') else model  # Only save the model it-self
+                    output_model_file = os.path.join(args.output_dir, WEIGHTS_NAME)
+                    torch.save(model_to_save.state_dict(), output_model_file)
+                    output_config_file = os.path.join(args.output_dir, CONFIG_NAME)
+                    with open(output_config_file, 'w') as f:
+                        f.write(model_to_save.config.to_json_string())
+
                 if (step + 1) % args.gradient_accumulation_steps == 0:
                     if args.fp16:
                         # modify learning rate with special warm up BERT uses
@@ -867,10 +1000,10 @@ def main():
 
         # Load a trained model and config that you have fine-tuned
         config = BertConfig(output_config_file)
-        model = BertForSequenceClassification(config, num_labels=num_labels)
+        model = BertForTemporalClassification(config, num_labels=num_labels)
         model.load_state_dict(torch.load(output_model_file))
     else:
-        model = BertForSequenceClassification.from_pretrained(args.bert_model, num_labels=num_labels)
+        model = BertForTemporalClassification.from_pretrained(args.bert_model, num_labels=num_labels)
     model.to(device)
 
     if args.do_eval and (args.local_rank == -1 or torch.distributed.get_rank() == 0):
@@ -883,13 +1016,14 @@ def main():
         all_input_ids = torch.tensor([f.input_ids for f in eval_features], dtype=torch.long)
         all_input_mask = torch.tensor([f.input_mask for f in eval_features], dtype=torch.long)
         all_segment_ids = torch.tensor([f.segment_ids for f in eval_features], dtype=torch.long)
+        all_target_idxs = torch.tensor([f.target_idx for f in eval_features], dtype=torch.long)
 
         if output_mode == "classification":
             all_label_ids = torch.tensor([f.label_id for f in eval_features], dtype=torch.long)
         elif output_mode == "regression":
             all_label_ids = torch.tensor([f.label_id for f in eval_features], dtype=torch.float)
 
-        eval_data = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_label_ids)
+        eval_data = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_label_ids, all_target_idxs)
         # Run prediction for full data
         eval_sampler = SequentialSampler(eval_data)
         eval_dataloader = DataLoader(eval_data, sampler=eval_sampler, batch_size=args.eval_batch_size)
@@ -899,14 +1033,16 @@ def main():
         nb_eval_steps = 0
         preds = []
 
-        for input_ids, input_mask, segment_ids, label_ids in tqdm(eval_dataloader, desc="Evaluating"):
+        for input_ids, input_mask, segment_ids, label_ids, target_idxs in tqdm(eval_dataloader, desc="Evaluating"):
             input_ids = input_ids.to(device)
+            input_mask = input_mask.to(device)
             input_mask = input_mask.to(device)
             segment_ids = segment_ids.to(device)
             label_ids = label_ids.to(device)
+            target_idxs = target_idxs.to(device)
 
             with torch.no_grad():
-                logits = model(input_ids, segment_ids, input_mask, labels=None)
+                logits = model(input_ids, segment_ids, input_mask, labels=None, target_idx=target_idxs)
 
             # create eval loss and other metric required by the task
             if output_mode == "classification":
@@ -927,9 +1063,11 @@ def main():
         eval_loss = eval_loss / nb_eval_steps
         preds = preds[0]
         if output_mode == "classification":
-            preds = np.argmax(preds, axis=1)
+            preds = np.argmax(preds, axis=2)
+            preds = np.transpose(preds)[0]
         elif output_mode == "regression":
             preds = np.squeeze(preds)
+        print(all_label_ids.numpy())
         result = compute_metrics(task_name, preds, all_label_ids.numpy())
         loss = tr_loss/nb_tr_steps if args.do_train else None
 
@@ -998,7 +1136,7 @@ def main():
             eval_loss = eval_loss / nb_eval_steps
             preds = preds[0]
             preds = np.argmax(preds, axis=1)
-            result = compute_metrics(task_name, preds, all_label_ids.numpy())
+            result = compute_metrics(task_name, preds.view(-1).numpy(), all_label_ids.numpy())
             loss = tr_loss/nb_tr_steps if args.do_train else None
 
             result['eval_loss'] = eval_loss

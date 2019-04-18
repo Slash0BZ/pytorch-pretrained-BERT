@@ -37,7 +37,7 @@ from sklearn.metrics import matthews_corrcoef, f1_score
 
 from pytorch_pretrained_bert.file_utils import PYTORCH_PRETRAINED_BERT_CACHE
 from pytorch_pretrained_bert.modeling import BertForTemporalClassification, BertConfig, WEIGHTS_NAME, CONFIG_NAME
-from pytorch_pretrained_bert.tokenization import BertTokenizer
+from pytorch_pretrained_bert.tokenization import BertTokenizer, BasicTokenizer
 from pytorch_pretrained_bert.optimization import BertAdam, warmup_linear
 
 logging.basicConfig(format = '%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
@@ -49,7 +49,7 @@ logger = logging.getLogger(__name__)
 class InputExample(object):
     """A single training/test example for simple sequence classification."""
 
-    def __init__(self, guid, text_a, text_b=None, label=None, target_idx=0):
+    def __init__(self, guid, text_a, text_b=None, label=None, target_idx=0, tolerance=3):
         """Constructs a InputExample.
 
         Args:
@@ -66,17 +66,19 @@ class InputExample(object):
         self.text_b = text_b
         self.label = label
         self.target_idx = target_idx
+        self.tolerance = tolerance
 
 
 class InputFeatures(object):
     """A single set of features of data."""
 
-    def __init__(self, input_ids, input_mask, segment_ids, label_id, target_idx=0):
+    def __init__(self, input_ids, input_mask, segment_ids, label_id, target_idx=0, tolerance=3):
         self.input_ids = input_ids
         self.input_mask = input_mask
         self.segment_ids = segment_ids
         self.label_id = label_id
         self.target_idx = target_idx
+        self.tolerance = tolerance
 
 
 class DataProcessor(object):
@@ -210,6 +212,8 @@ class TemporalNominalProcessor(DataProcessor):
             groups = line.split("\t")
             guid = "%s-%s" % (set_type, i)
             text_a = groups[0]
+            if len(text_a.split()) > 120:
+                continue
             target_idx = int(groups[1])
             label_raw = groups[2]
             label_num = float(label_raw.split(" ")[0])
@@ -219,9 +223,113 @@ class TemporalNominalProcessor(DataProcessor):
                 label_num = 100.0
             label_unit = label_raw.split(" ")[1].lower()
             label_idx = unit_map[label_unit] * 20.0 + label_num / 5.0
+            if label_idx == 0:
+                label_idx = 1
+            if label_idx == 160:
+                label_idx = 159
             examples.append(
                 InputExample(guid=guid, text_a=text_a, label=str(int(label_idx)), target_idx=target_idx))
         return examples
+
+
+class TimebankProcessor(DataProcessor):
+
+    def get_train_examples(self, data_dir):
+        """See base class."""
+        f = open(os.path.join(data_dir, "train.txt"), "r")
+        lines = [x.strip() for x in f.readlines()]
+        return self._create_examples(lines, "train")
+
+    def get_dev_examples(self, data_dir):
+        f = open(os.path.join(data_dir, "test.txt"), "r")
+        lines = [x.strip() for x in f.readlines()]
+        return self._create_examples(lines, "dev")
+
+    def get_labels(self):
+        return [str(x) for x in range(161)]
+
+    def get_label_from_expression(self, exp):
+        if exp == "NULL":
+            return None
+        unit = ""
+        unit_map = {
+            "second": 0.0,
+            "seconds": 0.0,
+            "minute": 1.0,
+            "minutes": 1.0,
+            "hour": 2.0,
+            "hours": 2.0,
+            "day": 3.0,
+            "days": 3.0,
+            "week": 4.0,
+            "weeks": 4.0,
+            "month": 5.0,
+            "months": 5.0,
+            "year": 6.0,
+            "years": 6.0,
+            "century": 7.0,
+            "centuries": 7.0,
+        }
+        if exp.startswith("PT") and exp[-1] == "M":
+            unit = "minute"
+        if exp[-1] == "M" and exp[1] != "T":
+            unit = "month"
+        if exp[-1] == "Y":
+            unit = "year"
+        if exp[-1] == "D":
+            unit = "day"
+        if exp[-1] == "W":
+            unit = "week"
+        if exp[-1] == "H":
+            unit = "hour"
+        if exp[-1] == "S":
+            unit = "second"
+
+        if exp.startswith("PT"):
+            exp = exp[2:]
+        else:
+            exp = exp[1:]
+
+        exp = exp[:-1]
+        label_num = float(exp)
+        if label_num < 0.0:
+            label_num = 0.0
+        if label_num > 100.0:
+            label_num = 100.0
+
+        if unit == "":
+            return None
+        label_idx = unit_map[unit] * 20.0 + label_num / 5.0
+        if label_idx == 0:
+            label_idx = 1
+        if label_idx == 160:
+            label_idx = 159
+        return label_idx
+
+    def _create_examples(self, lines, set_type):
+        """Creates examples for the training and dev sets."""
+        examples = []
+        for (i, line) in enumerate(lines):
+            groups = line.split("\t")
+            guid = "%s-%s" % (set_type, i)
+            text_a = groups[0]
+            if len(text_a.split()) > 120:
+                continue
+            target_idx = int(groups[1])
+            label_lower = self.get_label_from_expression(groups[2])
+            label_upper = self.get_label_from_expression(groups[3])
+
+            if label_lower is None or label_upper is None or label_lower < label_upper:
+                continue
+
+            label_num = int(float(label_upper + label_lower) / 2.0)
+            examples.append(
+                InputExample(guid=guid, text_a=text_a, label=str(label_num), target_idx=target_idx, tolerance=max(3, max(
+                    abs(label_lower - label_num), abs(label_upper - label_num)
+                )))
+            )
+        return examples
+
 
 
 class MnliProcessor(DataProcessor):
@@ -580,7 +688,8 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
                               input_mask=input_mask,
                               segment_ids=segment_ids,
                               label_id=label_id,
-                              target_idx=example.target_idx))
+                              target_idx=example.target_idx,
+                              tolerance=example.tolerance))
     return features
 
 
@@ -601,16 +710,19 @@ def _truncate_seq_pair(tokens_a, tokens_b, max_length):
             tokens_b.pop()
 
 
-def simple_accuracy(preds, labels):
+def simple_accuracy(preds, labels, tolerances=None):
     correct = 0.0
-    for i, v in enumerate(preds):
-        if labels[i] - 3 <= preds[i] <= labels[i] + 3:
-            correct += 1.0
-    return correct / float(len(preds))
+    if tolerances is not None:
+        for i, v in enumerate(preds):
+            if labels[i] - tolerances[i] <= preds[i] <= labels[i] + tolerances[i]:
+                correct += 1.0
+        return correct / float(len(preds))
+    else:
+        return 0.0
 
 
-def acc_and_f1(preds, labels):
-    acc = simple_accuracy(preds, labels)
+def acc_and_f1(preds, labels, additional=None):
+    acc = simple_accuracy(preds, labels, additional)
     # f1 = f1_score(y_true=labels, y_pred=preds)
     return {
         "acc": acc,
@@ -648,7 +760,7 @@ def avg_hit_loss(preds, labels):
     }
 
 
-def compute_metrics(task_name, preds, labels):
+def compute_metrics(task_name, preds, labels, additional=None):
     assert len(preds) == len(labels)
     if task_name == "cola":
         return {"mcc": matthews_corrcoef(labels, preds)}
@@ -673,7 +785,9 @@ def compute_metrics(task_name, preds, labels):
     elif task_name == "animal":
         return avg_hit_loss(preds, labels)
     elif task_name == "temporalnom":
-        return acc_and_f1(preds, labels)
+        return acc_and_f1(preds, labels, additional)
+    elif task_name == "timebank":
+        return acc_and_f1(preds, labels, additional)
     else:
         raise KeyError(task_name)
 
@@ -790,6 +904,7 @@ def main():
         "wnli": WnliProcessor,
         "animal": AnimalProcessor,
         "temporalnom": TemporalNominalProcessor,
+        "timebank": TimebankProcessor,
     }
 
     output_modes = {
@@ -804,6 +919,7 @@ def main():
         "wnli": "classification",
         "animal": "regression",
         "temporalnom": "classification",
+        "timebank": "classification"
     }
 
     if args.local_rank == -1 or args.no_cuda:
@@ -850,6 +966,7 @@ def main():
     num_labels = len(label_list)
 
     tokenizer = BertTokenizer.from_pretrained(args.bert_model, do_lower_case=args.do_lower_case)
+    # tokenizer = BasicTokenizer()
 
     train_examples = None
     num_train_optimization_steps = None
@@ -1017,13 +1134,14 @@ def main():
         all_input_mask = torch.tensor([f.input_mask for f in eval_features], dtype=torch.long)
         all_segment_ids = torch.tensor([f.segment_ids for f in eval_features], dtype=torch.long)
         all_target_idxs = torch.tensor([f.target_idx for f in eval_features], dtype=torch.long)
+        all_tolerances = torch.tensor([f.tolerance for f in eval_features], dtype=torch.long)
 
         if output_mode == "classification":
             all_label_ids = torch.tensor([f.label_id for f in eval_features], dtype=torch.long)
         elif output_mode == "regression":
             all_label_ids = torch.tensor([f.label_id for f in eval_features], dtype=torch.float)
 
-        eval_data = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_label_ids, all_target_idxs)
+        eval_data = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_label_ids, all_target_idxs, all_tolerances)
         # Run prediction for full data
         eval_sampler = SequentialSampler(eval_data)
         eval_dataloader = DataLoader(eval_data, sampler=eval_sampler, batch_size=args.eval_batch_size)
@@ -1033,7 +1151,7 @@ def main():
         nb_eval_steps = 0
         preds = []
 
-        for input_ids, input_mask, segment_ids, label_ids, target_idxs in tqdm(eval_dataloader, desc="Evaluating"):
+        for input_ids, input_mask, segment_ids, label_ids, target_idxs, tolerances in tqdm(eval_dataloader, desc="Evaluating"):
             input_ids = input_ids.to(device)
             input_mask = input_mask.to(device)
             input_mask = input_mask.to(device)
@@ -1067,8 +1185,7 @@ def main():
             preds = np.transpose(preds)[0]
         elif output_mode == "regression":
             preds = np.squeeze(preds)
-        print(all_label_ids.numpy())
-        result = compute_metrics(task_name, preds, all_label_ids.numpy())
+        result = compute_metrics(task_name, preds, all_label_ids.numpy(), all_tolerances.numpy())
         loss = tr_loss/nb_tr_steps if args.do_train else None
 
         result['eval_loss'] = eval_loss

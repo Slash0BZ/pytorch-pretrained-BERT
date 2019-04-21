@@ -224,6 +224,8 @@ class BasicTokenizer(object):
 
     def _run_split_on_punc(self, text):
         """Splits punctuation on a piece of text."""
+        # Warning: modified
+        return [text]
         if text in self.never_split:
             return [text]
         chars = list(text)

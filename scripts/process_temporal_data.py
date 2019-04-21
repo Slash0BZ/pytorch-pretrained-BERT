@@ -3,8 +3,10 @@ import os
 import jsonlines
 import pickle
 import random
+import json
 from word2number import w2n
 from ccg_nlpy import local_pipeline
+from math import floor
 import matplotlib.pyplot as plt
 # from allennlp import predictors
 # from allennlp.predictors import Predictor
@@ -179,8 +181,13 @@ class GigawordExtractor:
 
         tokens = sentence.split()
         valid = True
+        ever = False
         for (i, token) in enumerate(tokens):
-            if token in self.duration_keys:
+            if token in self.duration_keys and i > 0:
+                if GigawordExtractor.quantity(tokens[i - 1]) is not None:
+                    ever = True
+                else:
+                    continue
                 next_token_idx = min(len(tokens) - 1, i + 1)
                 next_token = tokens[next_token_idx]
                 if next_token.lower() in invalid_next_tokens:
@@ -202,8 +209,7 @@ class GigawordExtractor:
                 next_two_tokens = tokens[min(len(tokens) - 1, i + 1)] + " " + tokens[min(len(tokens) - 1, i + 2)]
                 if next_two_tokens.lower() in invalid_next_two_tokens:
                     valid = False
-        return valid
-
+        return valid and ever
 
     def process_duration_initial_filter(self, path, out_path):
         invalid_next_tokens = [
@@ -417,6 +423,19 @@ class GigawordExtractor:
             target_idx = int(line.split("\t")[1])
             if target_idx >= mask_end:
                 target_idx -= mask_end - mask_start
+
+            subj_start = int(line.split("\t")[3])
+            subj_end = int(line.split("\t")[4])
+            obj_start = int(line.split("\t")[5])
+            obj_end = int(line.split("\t")[6])
+
+            if subj_start >= mask_end:
+                subj_start -= mask_end - mask_start
+                subj_end -= mask_end - mask_start
+            if obj_start >= mask_end:
+                obj_start -= mask_end - mask_start
+                obj_end -= mask_end - mask_start
+
             label = line.split("\t")[2]
             label_num = float(label.split()[0])
             label_unit = label.split()[1].lower()
@@ -439,7 +458,8 @@ class GigawordExtractor:
             for t in tokens:
                 if t != "":
                     new_tokens.append(t)
-            f_out.write(" ".join(new_tokens) + "\t" + str(target_idx) + "\t" + label + "\n")
+            f_out.write(" ".join(new_tokens) + "\t" + str(target_idx) + "\t" + label + "\t" +
+                        str(subj_start) + "\t" + str(subj_end) + "\t" + str(obj_start) + "\t" + str(obj_end) + "\n")
 
 
 # class PretrainedModel:
@@ -505,6 +525,28 @@ class SRLRunner:
                 return i
         return -1
 
+    def get_subj_position(self, tags):
+        start = -1
+        end = -1
+        for i, t in enumerate(tags):
+            if t == "B-ARG0":
+                start = i
+                end = i + 1
+            if t == "I-ARG0":
+                end += 1
+        return start, end
+
+    def get_obj_position(self, tags):
+        start = -1
+        end = -1
+        for i, t in enumerate(tags):
+            if t == "B-ARG1":
+                start = i
+                end = i + 1
+            if t == "I-ARG1":
+                end += 1
+        return start, end
+
     def get_tmp_range(self, tags):
         start = -1
         end = -1
@@ -563,7 +605,7 @@ class SRLRunner:
         lines = [x.strip() for x in open("samples/duration/duration_srl_succeed.jsonl").readlines()]
         reader = jsonlines.Reader(lines)
 
-        f_out = open("samples/duration/verb_formatted_1m.txt", "w")
+        f_out = open("samples/duration/verb_formatted_all_svo.txt", "w")
         for obj in reader:
             tokens = obj["TOKENS"]
             sentence = ' '.join(tokens)
@@ -571,11 +613,56 @@ class SRLRunner:
                 tags = obj["TAGS"]
                 verb_pos = self.get_verb_position(tags)
                 start, end = self.get_tmp_range(tags)
+                subj_start, subj_end = self.get_subj_position(tags)
+                obj_start, obj_end = self.get_obj_position(tags)
                 if verb_pos == -1 or start == -1 or end == -1:
                     continue
                 for j in range(start, end):
                     tokens[j] = "[MASK]"
-                f_out.write(' '.join(tokens) + "\t" + str(verb_pos) + "\t" + obj["TMPVAL"] + "\n")
+                f_out.write(' '.join(tokens) + "\t" + str(verb_pos) + "\t" + obj["TMPVAL"] + "\t"
+                            + str(subj_start) + "\t" + str(subj_end) + "\t" + str(obj_start) + "\t" + str(obj_end) + "\n")
+
+    def prepare_nyt_srl_file(self):
+        main_dir = "/Users/xuanyuzhou/Downloads/nyt-srl"
+        # f_out = jsonlines.open("samples/duration/verb_nyt_svo.jsonl", "w")
+
+        token_count = 0
+        doc_count = 0
+        for root, dirs, files in os.walk(main_dir):
+            for sub_dir in dirs:
+                sub_path = main_dir + "/" + sub_dir + "/srl"
+                for _, _, fs in os.walk(sub_path):
+                    for f in fs:
+                        file_path = sub_path + "/" + f
+                        content = "".join([x.strip() for x in open(file_path).readlines()])
+                        if len(content) < 1:
+                            continue
+                        doc_count += 1
+                        j = json.loads(content)
+                        for obj in j:
+                            if len(obj) < 1:
+                                continue
+                            if "words" not in obj:
+                                continue
+                            token_count += len(obj["words"])
+                        #     if self.extractor.validate_sentence(" ".join(obj["words"])):
+                        #         f_out.write(obj)
+                            # tokens = obj["TOKENS"]
+                            # sentence = ' '.join(tokens)
+                            # if self.extractor.validate_sentence(sentence):
+                            #     tags = obj["TAGS"]
+                            #     verb_pos = self.get_verb_position(tags)
+                            #     start, end = self.get_tmp_range(tags)
+                            #     subj_start, subj_end = self.get_subj_position(tags)
+                            #     obj_start, obj_end = self.get_obj_position(tags)
+                            #     if verb_pos == -1 or start == -1 or end == -1:
+                            #         continue
+                            #     for j in range(start, end):
+                            #         tokens[j] = "[MASK]"
+                            #     f_out.write(' '.join(tokens) + "\t" + str(verb_pos) + "\t" + obj["TMPVAL"] + "\t"
+                            #                 + str(subj_start) + "\t" + str(subj_end) + "\t" + str(obj_start) + "\t" + str(obj_end) + "\n")
+        print(token_count)
+        print(doc_count)
 
     def tokenize_timebank_sentence(self, sentence):
         pause = False
@@ -644,6 +731,116 @@ class SRLRunner:
                     for i, idx in enumerate(idxs):
                         output = ' '.join(tokens) + "\t" + str(idx) + "\t" + str(tags[i][0]) + "\t" + str(tags[i][1])
                         f_out.write(output + "\n")
+
+    def get_label(self, exp):
+        unit_map = {
+            "second": 0.0,
+            "seconds": 0.0,
+            "minute": 1.0,
+            "minutes": 1.0,
+            "hour": 2.0,
+            "hours": 2.0,
+            "day": 3.0,
+            "days": 3.0,
+            "week": 4.0,
+            "weeks": 4.0,
+            "month": 5.0,
+            "months": 5.0,
+            "year": 6.0,
+            "years": 6.0,
+            "century": 7.0,
+            "centuries": 7.0,
+        }
+        advance_map = {
+            "second": 60.0,
+            "seconds": 60.0,
+            "minute": 60.0,
+            "minutes": 60.0,
+            "hour": 24.0,
+            "hours": 24.0,
+            "day": 7.0,
+            "days": 7.0,
+            "week": 4.0,
+            "weeks": 4.0,
+            "month": 12.0,
+            "months": 12.0,
+            "year": 100.0,
+            "years": 100.0,
+            "century": 2.0,
+            "centuries": 2.0,
+        }
+        groups = exp.split()
+        label_num = float(groups[0])
+        if label_num < 1.0:
+            return -1
+        label_unit = groups[1].lower()
+        label_idx = int(floor(label_num * 5.0 / advance_map[label_unit]))
+        if label_idx > 4:
+            label_idx = 4
+        if label_idx < 0:
+            label_idx = 0
+        label_idx = unit_map[label_unit] * 5.0 + label_idx
+
+        return label_idx
+
+    def count_label(self, path):
+        lines = [x.strip() for x in open(path).readlines()]
+
+        count_map = {}
+        for line in lines:
+            label = self.get_label(line.split("\t")[2])
+            if label == -1:
+                continue
+            if label not in count_map:
+                count_map[label] = 0
+            count_map[label] += 1
+        for i in range(0, 40):
+            if float(i) in count_map:
+                print(str(count_map[float(i)]) + ", ")
+            else:
+                print(str(1) + ", ")
+
+        return count_map
+
+    def prepare_timebank_srl(self):
+        source_lines = [x.strip() for x in open("samples/duration/timebank_filtered.txt").readlines()]
+        reader = jsonlines.Reader([x.strip() for x in open("samples/timebank_srl.jsonl").readlines()])
+        f_out = open("samples/duration/timebank_svo.txt", "w")
+        objs = []
+        for obj in reader:
+            objs.append(obj)
+        assert len(source_lines) == len(objs)
+        for i, line in enumerate(source_lines):
+            tokens = line.split("\t")[0].split()
+            target_idx = int(line.split("\t")[1])
+            verb_form = tokens[target_idx]
+            obj = objs[i]
+
+            new_tokens = obj["words"]
+            wrote = False
+            for verb in obj["verbs"]:
+                if verb["verb"] == verb_form:
+                    tags = verb["tags"]
+
+                    valid = False
+                    for j in range(target_idx - 2, target_idx + 3):
+                        if 0 <= j < len(tags):
+                            if tags[j] == "B-V":
+                                valid = True
+                    if valid:
+                        verb_pos = self.get_verb_position(tags)
+                        subj_start, subj_end = self.get_subj_position(tags)
+                        obj_start, obj_end = self.get_obj_position(tags)
+                        if verb_pos == -1:
+                            continue
+                        f_out.write(" ".join(new_tokens) + "\t" + str(verb_pos) + "\t" + line.split("\t")[2] + "\t" + line.split("\t")[3] + "\t" +
+                                    str(subj_start) + "\t" + str(subj_end) + "\t" + str(obj_start) + "\t" + str(obj_end) + "\n")
+                        wrote = True
+                        break
+            if not wrote:
+                f_out.write(" ".join(tokens) + "\t" + str(target_idx) + "\t" + line.split("\t")[2] + "\t" + line.split("\t")[3] + "\t" +
+                            str(-1) + "\t" + str(-1) + "\t" + str(-1) + "\t" + str(-1) + "\n")
+
 
 
 class VerbBaseline:
@@ -758,11 +955,129 @@ class VerbBaseline:
         plt.hist(cur_map[key], bins=100, log=True, range=(0, 3153600000), density=True)
         plt.show()
 
+    def get_seconds(self, exp):
+
+        unit = ""
+        if exp.startswith("PT") and exp[-1] == "M":
+            unit = "minute"
+        if exp[-1] == "M" and exp[1] != "T":
+            unit = "month"
+        if exp[-1] == "Y":
+            unit = "year"
+        if exp[-1] == "D":
+            unit = "day"
+        if exp[-1] == "W":
+            unit = "week"
+        if exp[-1] == "H":
+            unit = "hour"
+        if exp[-1] == "S":
+            unit = "second"
+        if exp.startswith("PT"):
+            exp = exp[2:]
+        else:
+            exp = exp[1:]
+        if unit == "" or exp == "NULL":
+            return None
+        exp = exp[:-1]
+        label_num = float(exp)
+
+        return label_num * self.convert_map[unit]
+
+    def get_label(self, lowerbound, upperbound):
+        lower_val = self.get_seconds(lowerbound)
+        upper_val = self.get_seconds(upperbound)
+
+        if lower_val is None or upper_val is None or lower_val > upper_val:
+            return None
+
+        val = (lower_val + upper_val) / 2.0
+
+        if val < 1.0 * self.convert_map["day"]:
+            return 0
+        else:
+            return 1
+
+    def test_file(self, map_path, path):
+        with open(map_path, "rb") as f_in:
+            cur_map = pickle.load(f_in)
+        lines = [x.strip() for x in open(path).readlines()]
+
+        labels = [0, 1]
+
+        correct = {}
+        predicted = {}
+        labeled = {}
+
+        f_out = open("samples/duration/timebank_filtered.txt", "w")
+        for line in lines:
+            tokens = line.split("\t")[0].split()
+            target_idx = int(line.split("\t")[1])
+            lowerbound = line.split("\t")[2]
+            upperbound = line.split("\t")[3]
+
+            label = self.get_label(lowerbound, upperbound)
+            if label is None:
+                continue
+
+            f_out.write(line + "\n")
+            if label not in labeled:
+                labeled[label] = 0.0
+            labeled[label] += 1.0
+
+            doc = self.pipeline.doc([tokens], pretokenized=True)
+            key = (doc.get_lemma)[target_idx]["label"].lower()
+
+            predicted_label = random.choice(labels)
+
+            day_val = 1.0 * self.convert_map["day"]
+            if key in cur_map:
+                pos = -1
+                data_points = sorted(cur_map[key])
+                data_maps = {}
+                for d in data_points:
+                    if d not in data_maps:
+                        data_maps[d] = 0.0
+                    data_maps[d] += 1.0
+                most_popular_val = sorted(data_maps.items(), key=lambda item: item[1], reverse=True)[0][1]
+                if most_popular_val < day_val:
+                    predicted_label = 0
+                else:
+                    predicted_label = 1
+                # for i, d in enumerate(data_points):
+                #     if day_val > d:
+                #         pos = i
+                #         break
+                # if pos > -1:
+                #     if float(pos) / float(len(data_points)) > 0.5:
+                #         predicted_label = 0
+                #     else:
+                #         predicted_label = 1
+
+            if predicted_label not in predicted:
+                predicted[predicted_label] = 0.0
+            predicted[predicted_label] += 1.0
+
+            if predicted_label == label:
+                if label not in correct:
+                    correct[label] = 0.0
+                correct[label] += 1.0
+
+        for key in correct:
+            name = "Less than a day"
+            if key == 1:
+                name = "Longer than a day"
+            p = correct[key] / predicted[key]
+            r = correct[key] / labeled[key]
+            f = 2 * p * r / (p + r)
+
+            print(name)
+            print(str(p) + ", " + str(r) + ", " + str(f))
+            print()
+
 
 if __name__ == "__main__":
-    extractor = GigawordExtractor()
-    extractor.get_rid_of_masks("samples/verbs/train.txt", "samples/verbs_nonmask/train.txt")
-    extractor.get_rid_of_masks("samples/verbs/test.txt", "samples/verbs_nonmask/test.txt")
+    # extractor = GigawordExtractor()
+    # extractor.get_rid_of_masks("samples/verbs/test.txt", "samples/verbs_nonmask/test.txt")
     # extractor.prepare_nom_data("samples/duration/all/nominals.txt", "samples/duration/all/nominals_formatted.txt")
     # extractor.split_nominals()
     # extractor.read_file("/Users/xuanyuzhou/Downloads/tmp/apw_eng/apw_eng_199411")
@@ -772,14 +1087,24 @@ if __name__ == "__main__":
     # srl = AllenSRL()
     # srl.predict_file("samples/duration_afp_eng_filtered.txt")
 
-    # runner = SRLRunner()
+    runner = SRLRunner()
+    runner.count_label("samples/duration/verb_formatted_all_svo.txt")
+    # runner.prepare_timebank_srl()
     # runner.prepare_timebank_file()
     # runner.parse_srl_file("samples/duration_srl_verbs.476452.jsonl")
-    # runner.parse_srl_file("samples/duration_srl_verbs_rest.jsonl")
+    # runner.parse_srl_file("samples/duration_srl_verbs_3.jsonl")
+    # runner.parse_srl_file("samples/duration/verb_nyt_svo.jsonl")
     # runner.prepare_verb_file()
+    # runner.prepare_nyt_srl_file()
     # runner.print_file("samples/duration/duration_srl_fail.jsonl")
+
+    # extractor = GigawordExtractor()
+    # extractor.get_rid_of_masks("samples/duration/verb_formatted_all_svo.txt", "samples/duration/verb_formatted_all_svo.txt")
 
     # baseline = VerbBaseline("samples/duration/all/verbs.txt")
     # baseline.process("samples/duration/all/nearest_verb_cont/partition_")
     # VerbBaseline.merge_map("samples/duration/all/nearest_verb_all/partition_", "samples/duration/all/nearest_verb.pkl")
     # VerbBaseline.exp_output("samples/duration/all/nearest_verb.pkl", "work")
+
+    # baseline = VerbBaseline("")
+    # baseline.test_file("samples/duration/all/nearest_verb.pkl", "samples/duration/timebank_formatted.txt")

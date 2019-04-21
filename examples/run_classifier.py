@@ -34,6 +34,7 @@ from tqdm import tqdm, trange
 from torch.nn import CrossEntropyLoss, MSELoss, BCEWithLogitsLoss
 from scipy.stats import pearsonr, spearmanr
 from sklearn.metrics import matthews_corrcoef, f1_score
+from math import floor
 
 from pytorch_pretrained_bert.file_utils import PYTORCH_PRETRAINED_BERT_CACHE
 from pytorch_pretrained_bert.modeling import BertForTemporalClassification, BertConfig, WEIGHTS_NAME, CONFIG_NAME
@@ -49,7 +50,7 @@ logger = logging.getLogger(__name__)
 class InputExample(object):
     """A single training/test example for simple sequence classification."""
 
-    def __init__(self, guid, text_a, text_b=None, label=None, target_idx=0, tolerance=3):
+    def __init__(self, guid, text_a, text_b=None, label=None, target_idx=0, tolerance=1, subj_mask=None, obj_mask=None):
         """Constructs a InputExample.
 
         Args:
@@ -67,18 +68,22 @@ class InputExample(object):
         self.label = label
         self.target_idx = target_idx
         self.tolerance = tolerance
+        self.subj_mask = subj_mask
+        self.obj_mask = obj_mask
 
 
 class InputFeatures(object):
     """A single set of features of data."""
 
-    def __init__(self, input_ids, input_mask, segment_ids, label_id, target_idx=0, tolerance=3):
+    def __init__(self, input_ids, input_mask, segment_ids, label_id, target_idx=0, tolerance=3, subj_mask=None, obj_mask=None):
         self.input_ids = input_ids
         self.input_mask = input_mask
         self.segment_ids = segment_ids
         self.label_id = label_id
         self.target_idx = target_idx
         self.tolerance = tolerance
+        self.subj_mask = subj_mask
+        self.obj_mask = obj_mask
 
 
 class DataProcessor(object):
@@ -185,7 +190,7 @@ class TemporalNominalProcessor(DataProcessor):
         return self._create_examples(lines, "dev")
 
     def get_labels(self):
-        return [str(x) for x in range(161)]
+        return [str(x) for x in range(40)]
 
     def _create_examples(self, lines, set_type):
         """Creates examples for the training and dev sets."""
@@ -208,6 +213,24 @@ class TemporalNominalProcessor(DataProcessor):
             "century": 7.0,
             "centuries": 7.0,
         }
+        advance_map = {
+            "second": 60.0,
+            "seconds": 60.0,
+            "minute": 60.0,
+            "minutes": 60.0,
+            "hour": 24.0,
+            "hours": 24.0,
+            "day": 7.0,
+            "days": 7.0,
+            "week": 4.0,
+            "weeks": 4.0,
+            "month": 12.0,
+            "months": 12.0,
+            "year": 100.0,
+            "years": 100.0,
+            "century": 2.0,
+            "centuries": 2.0,
+        }
         for (i, line) in enumerate(lines):
             groups = line.split("\t")
             guid = "%s-%s" % (set_type, i)
@@ -217,18 +240,30 @@ class TemporalNominalProcessor(DataProcessor):
             target_idx = int(groups[1])
             label_raw = groups[2]
             label_num = float(label_raw.split(" ")[0])
-            if label_num < 0.0:
-                label_num = 0.0
-            if label_num > 100.0:
-                label_num = 100.0
+            if label_num < 1.0:
+                continue
             label_unit = label_raw.split(" ")[1].lower()
-            label_idx = unit_map[label_unit] * 20.0 + label_num / 5.0
-            if label_idx == 0:
-                label_idx = 1
-            if label_idx == 160:
-                label_idx = 159
+            label_idx = int(floor(label_num * 5.0 / advance_map[label_unit]))
+            if label_idx > 4:
+                label_idx = 4
+            if label_idx < 0:
+                label_idx = 0
+            label_idx = unit_map[label_unit] * 5.0 + label_idx
+            assert 40 > label_idx >= 0
+            subj_mask = [0] * len(text_a.split())
+            obj_mask = [0] * len(text_a.split())
+
+            if int(groups[3]) > -1:
+                for j in range(int(groups[3]), int(groups[4])):
+                    subj_mask[j] = 1
+            if int(groups[5]) > -1:
+                for j in range(int(groups[5]), int(groups[6])):
+                    obj_mask[j] = 1
+
             examples.append(
-                InputExample(guid=guid, text_a=text_a, label=str(int(label_idx)), target_idx=target_idx))
+                InputExample(
+                    guid=guid, text_a=text_a, label=str(int(label_idx)), target_idx=target_idx, subj_mask=subj_mask, obj_mask=obj_mask
+                ))
         return examples
 
 
@@ -246,7 +281,7 @@ class TimebankProcessor(DataProcessor):
         return self._create_examples(lines, "dev")
 
     def get_labels(self):
-        return [str(x) for x in range(161)]
+        return [str(x) for x in range(40)]
 
     def get_label_from_expression(self, exp):
         if exp == "NULL":
@@ -270,6 +305,24 @@ class TimebankProcessor(DataProcessor):
             "century": 7.0,
             "centuries": 7.0,
         }
+        advance_map = {
+            "second": 60.0,
+            "seconds": 60.0,
+            "minute": 60.0,
+            "minutes": 60.0,
+            "hour": 24.0,
+            "hours": 24.0,
+            "day": 7.0,
+            "days": 7.0,
+            "week": 4.0,
+            "weeks": 4.0,
+            "month": 12.0,
+            "months": 12.0,
+            "year": 100.0,
+            "years": 100.0,
+            "century": 2.0,
+            "centuries": 2.0,
+        }
         if exp.startswith("PT") and exp[-1] == "M":
             unit = "minute"
         if exp[-1] == "M" and exp[1] != "T":
@@ -292,18 +345,18 @@ class TimebankProcessor(DataProcessor):
 
         exp = exp[:-1]
         label_num = float(exp)
-        if label_num < 0.0:
-            label_num = 0.0
-        if label_num > 100.0:
-            label_num = 100.0
-
         if unit == "":
             return None
-        label_idx = unit_map[unit] * 20.0 + label_num / 5.0
-        if label_idx == 0:
-            label_idx = 1
-        if label_idx == 160:
-            label_idx = 159
+        label_unit = unit
+
+        # Hasn't changed to correct ones
+        label_idx = int(floor(label_num * 5.0 / advance_map[label_unit]))
+        if label_idx > 4:
+            label_idx = 4
+        if label_idx < 0:
+            label_idx = 0
+        label_idx = unit_map[label_unit] * 5.0 + label_idx
+
         return label_idx
 
     def _create_examples(self, lines, set_type):
@@ -319,14 +372,24 @@ class TimebankProcessor(DataProcessor):
             label_lower = self.get_label_from_expression(groups[2])
             label_upper = self.get_label_from_expression(groups[3])
 
-            if label_lower is None or label_upper is None or label_lower < label_upper:
+            if label_lower is None or label_upper is None or label_lower > label_upper:
                 continue
+
+            subj_mask = [0] * len(text_a.split())
+            obj_mask = [0] * len(text_a.split())
+
+            if int(groups[4]) > -1:
+                for j in range(int(groups[4]), int(groups[5])):
+                    subj_mask[j] = 1
+            if int(groups[6]) > -1:
+                for j in range(int(groups[6]), int(groups[7])):
+                    obj_mask[j] = 1
 
             label_num = int(float(label_upper + label_lower) / 2.0)
             examples.append(
-                InputExample(guid=guid, text_a=text_a, label=str(label_num), target_idx=target_idx, tolerance=max(3, max(
+                InputExample(guid=guid, text_a=text_a, label=str(label_num), target_idx=target_idx, tolerance=max(1, max(
                     abs(label_lower - label_num), abs(label_upper - label_num)
-                )))
+                )), subj_mask=subj_mask, obj_mask=obj_mask)
             )
         return examples
 
@@ -610,7 +673,8 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
         if ex_index % 10000 == 0:
             logger.info("Writing example %d of %d" % (ex_index, len(examples)))
 
-        tokens_a = tokenizer.tokenize(example.text_a)
+        # tokens_a = tokenizer.tokenize(example.text_a)
+        tokens_a = example.text_a.lower().split()
 
         tokens_b = None
         if example.text_b:
@@ -645,6 +709,9 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
         tokens = ["[CLS]"] + tokens_a + ["[SEP]"]
         segment_ids = [0] * len(tokens)
 
+        subj_mask = example.subj_mask
+        obj_mask = example.obj_mask
+
         if tokens_b:
             tokens += tokens_b + ["[SEP]"]
             segment_ids += [1] * (len(tokens_b) + 1)
@@ -660,10 +727,14 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
         input_ids += padding
         input_mask += padding
         segment_ids += padding
+        subj_mask = [0] + subj_mask + [0] + padding
+        obj_mask = [0] + obj_mask + [0] + padding
 
         assert len(input_ids) == max_seq_length
         assert len(input_mask) == max_seq_length
         assert len(segment_ids) == max_seq_length
+        assert len(subj_mask) == max_seq_length
+        assert len(obj_mask) == max_seq_length
 
         if output_mode == "classification":
             label_id = label_map[example.label]
@@ -679,6 +750,7 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
                     [str(x) for x in tokens]))
             logger.info("input_ids: %s" % " ".join([str(x) for x in input_ids]))
             logger.info("input_mask: %s" % " ".join([str(x) for x in input_mask]))
+            logger.info("subj_mask: %s" % " ".join([str(x) for x in subj_mask]))
             logger.info(
                     "segment_ids: %s" % " ".join([str(x) for x in segment_ids]))
             logger.info("label: %s (id = %d)" % (example.label, label_id))
@@ -688,8 +760,10 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
                               input_mask=input_mask,
                               segment_ids=segment_ids,
                               label_id=label_id,
-                              target_idx=example.target_idx,
-                              tolerance=example.tolerance))
+                              target_idx=example.target_idx + 1,
+                              tolerance=example.tolerance,
+                              subj_mask=subj_mask,
+                              obj_mask=obj_mask))
     return features
 
 
@@ -721,9 +795,99 @@ def simple_accuracy(preds, labels, tolerances=None):
         return 0.0
 
 
+def transform_label_to_timex(label_id):
+    unit_map = {
+        "second": 0.0,
+        "seconds": 0.0,
+        "minute": 1.0,
+        "minutes": 1.0,
+        "hour": 2.0,
+        "hours": 2.0,
+        "day": 3.0,
+        "days": 3.0,
+        "week": 4.0,
+        "weeks": 4.0,
+        "month": 5.0,
+        "months": 5.0,
+        "year": 6.0,
+        "years": 6.0,
+        "century": 7.0,
+        "centuries": 7.0,
+    }
+    advance_map = {
+        "second": 60.0,
+        "seconds": 60.0,
+        "minute": 60.0,
+        "minutes": 60.0,
+        "hour": 24.0,
+        "hours": 24.0,
+        "day": 7.0,
+        "days": 7.0,
+        "week": 4.0,
+        "weeks": 4.0,
+        "month": 12.0,
+        "months": 12.0,
+        "year": 100.0,
+        "years": 100.0,
+        "century": 2.0,
+        "centuries": 2.0,
+    }
+    unit_reverse_map = {}
+    for k in unit_map:
+        unit_reverse_map[unit_map[k]] = k
+
+    group = floor(label_id / 5.0)
+    unit = unit_reverse_map[group]
+    reminder = label_id - group * 5.0
+    label_num = advance_map[unit] * reminder / 5.0
+    label_num += 1.0
+    return str(label_num) + " " + unit
+
+
+def compute_f1(p, r):
+    return 2 * p * r / (p + r)
+
+def day_classification(preds, labels):
+    small_correct = 0.0
+    small_total = 0.0
+    small_predicted = 0.0
+    big_correct = 0.0
+    big_total = 0.0
+    big_predicted = 0.0
+
+    for i, l in enumerate(labels):
+        if l < 15:
+            small_total += 1.0
+            if preds[i] < 15:
+                small_correct += 1.0
+        else:
+            big_total += 1.0
+            if preds[i] >= 15:
+                big_correct += 1.0
+
+    for p in preds:
+        if p < 15:
+            small_predicted += 1.0
+        else:
+            big_predicted += 1.0
+
+    r_small = small_correct / small_total
+    p_small = small_correct / small_predicted
+
+    r_big = big_correct / big_total
+    p_big = big_correct / big_predicted
+
+    print("Less than a day: " + str(p_small) + ", " + str(r_small) + ", " + str(compute_f1(p_small, r_small)))
+    print("More than a day: " + str(p_big) + ", " + str(r_big) + ", " + str(compute_f1(p_big, r_big)))
+
+
 def acc_and_f1(preds, labels, additional=None):
     acc = simple_accuracy(preds, labels, additional)
+    f_out = open("./results.txt", "w")
+    for p in preds:
+        f_out.write(transform_label_to_timex(p) + "\n")
     # f1 = f1_score(y_true=labels, y_pred=preds)
+    day_classification(preds, labels)
     return {
         "acc": acc,
         # "f1": f1,
@@ -1027,6 +1191,12 @@ def main():
     global_step = 0
     nb_tr_steps = 0
     tr_loss = 0
+    loss_weight = torch.tensor(
+        [12599, 5532, 5457, 3349, 8380, 42760, 19599, 10153, 6953, 11107, 26586, 7530, 3196, 1023, 52578, 526,
+         23604, 23646, 6606, 20617, 1, 13602, 37940, 17273, 13138, 44364, 37647, 37295, 9576, 41377, 360330, 76985,
+         25722, 6532, 8578, 1, 1, 469, 1605, 7507]
+    ).float().to(device) / float(1031837)
+    print(loss_weight)
     if args.do_train:
         train_features = convert_examples_to_features(
             train_examples, label_list, args.max_seq_length, tokenizer, output_mode)
@@ -1038,13 +1208,17 @@ def main():
         all_input_mask = torch.tensor([f.input_mask for f in train_features], dtype=torch.long)
         all_segment_ids = torch.tensor([f.segment_ids for f in train_features], dtype=torch.long)
         all_target_idxs = torch.tensor([f.target_idx for f in train_features], dtype=torch.long)
+        all_subj_masks = torch.tensor([f.subj_mask for f in train_features], dtype=torch.long)
+        all_obj_masks = torch.tensor([f.obj_mask for f in train_features], dtype=torch.long)
 
         if output_mode == "classification":
             all_label_ids = torch.tensor([f.label_id for f in train_features], dtype=torch.long)
         elif output_mode == "regression":
             all_label_ids = torch.tensor([f.label_id for f in train_features], dtype=torch.float)
 
-        train_data = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_label_ids, all_target_idxs)
+        train_data = TensorDataset(
+            all_input_ids, all_input_mask, all_segment_ids, all_label_ids, all_target_idxs, all_subj_masks, all_obj_masks
+        )
         if args.local_rank == -1:
             train_sampler = RandomSampler(train_data)
         else:
@@ -1055,15 +1229,16 @@ def main():
         for _ in trange(int(args.num_train_epochs), desc="Epoch"):
             tr_loss = 0
             nb_tr_examples, nb_tr_steps = 0, 0
+            middle_loss = 0.0
             for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration")):
                 batch = tuple(t.to(device) for t in batch)
-                input_ids, input_mask, segment_ids, label_ids, target_idxs = batch
+                input_ids, input_mask, segment_ids, label_ids, target_idxs, subj_masks, obj_masks = batch
 
                 # define a new function to compute loss values for both output_modes
-                logits = model(input_ids, segment_ids, input_mask, labels=None, target_idx=target_idxs)
+                logits = model(input_ids, segment_ids, input_mask, labels=None, target_idx=target_idxs, subj_mask=subj_masks, obj_mask=obj_masks)
 
                 if output_mode == "classification":
-                    loss_fct = CrossEntropyLoss()
+                    loss_fct = CrossEntropyLoss(weight=loss_weight)
                     # loss_fct = BCEWithLogitsLoss()
                     # label_onehot = torch.FloatTensor(logits.view(-1, num_labels).size(0), num_labels).cuda()
                     # label_onehot.zero_()
@@ -1085,10 +1260,13 @@ def main():
                     loss.backward()
 
                 tr_loss += loss.item()
-                print("Loss: " + str(loss.item()))
+                middle_loss += loss.item()
+                if step % 100 == 0:
+                    print("Loss: " + str(middle_loss))
+                    middle_loss = 0.0
                 nb_tr_examples += input_ids.size(0)
                 nb_tr_steps += 1
-                if step % 100:
+                if step % 1000 == 0:
                     model_to_save = model.module if hasattr(model, 'module') else model  # Only save the model it-self
                     output_model_file = os.path.join(args.output_dir, WEIGHTS_NAME)
                     torch.save(model_to_save.state_dict(), output_model_file)
@@ -1135,13 +1313,15 @@ def main():
         all_segment_ids = torch.tensor([f.segment_ids for f in eval_features], dtype=torch.long)
         all_target_idxs = torch.tensor([f.target_idx for f in eval_features], dtype=torch.long)
         all_tolerances = torch.tensor([f.tolerance for f in eval_features], dtype=torch.long)
+        all_subj_masks = torch.tensor([f.subj_mask for f in eval_features], dtype=torch.long)
+        all_obj_masks = torch.tensor([f.obj_mask for f in eval_features], dtype=torch.long)
 
         if output_mode == "classification":
             all_label_ids = torch.tensor([f.label_id for f in eval_features], dtype=torch.long)
         elif output_mode == "regression":
             all_label_ids = torch.tensor([f.label_id for f in eval_features], dtype=torch.float)
 
-        eval_data = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_label_ids, all_target_idxs, all_tolerances)
+        eval_data = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_label_ids, all_target_idxs, all_tolerances, all_subj_masks, all_obj_masks)
         # Run prediction for full data
         eval_sampler = SequentialSampler(eval_data)
         eval_dataloader = DataLoader(eval_data, sampler=eval_sampler, batch_size=args.eval_batch_size)
@@ -1151,20 +1331,28 @@ def main():
         nb_eval_steps = 0
         preds = []
 
-        for input_ids, input_mask, segment_ids, label_ids, target_idxs, tolerances in tqdm(eval_dataloader, desc="Evaluating"):
+        f_logits_out = open("./result_logits.txt", "w")
+        for input_ids, input_mask, segment_ids, label_ids, target_idxs, tolerances, subj_masks, obj_masks in tqdm(eval_dataloader, desc="Evaluating"):
             input_ids = input_ids.to(device)
             input_mask = input_mask.to(device)
             input_mask = input_mask.to(device)
             segment_ids = segment_ids.to(device)
             label_ids = label_ids.to(device)
             target_idxs = target_idxs.to(device)
+            subj_masks = subj_masks.to(device)
+            obj_masks = obj_masks.to(device)
 
             with torch.no_grad():
-                logits = model(input_ids, segment_ids, input_mask, labels=None, target_idx=target_idxs)
+                logits = model(input_ids, segment_ids, input_mask, labels=None, target_idx=target_idxs, subj_mask=subj_masks, obj_mask=obj_masks)
+                logits_numpy = logits.view(-1, num_labels).detach().cpu().numpy()
+                for l in logits_numpy:
+                    for ll in l:
+                        f_logits_out.write(str(ll) + "\t")
+                    f_logits_out.write("\n")
 
             # create eval loss and other metric required by the task
             if output_mode == "classification":
-                loss_fct = CrossEntropyLoss()
+                loss_fct = CrossEntropyLoss(weight=loss_weight)
                 tmp_eval_loss = loss_fct(logits.view(-1, num_labels), label_ids.view(-1))
             elif output_mode == "regression":
                 loss_fct = MSELoss()
@@ -1180,9 +1368,17 @@ def main():
 
         eval_loss = eval_loss / nb_eval_steps
         preds = preds[0]
+        # print(preds.shape)
+        # weight_tensor_list = [12599, 5532, 5457, 3349, 8380, 42760, 19599, 10153, 6953, 11107, 26586, 7530, 3196, 1023, 52578, 526, 23604, 23646, 6606, 20617, 1, 13602, 37940, 17273, 13138, 44364, 37647, 37295, 9576, 41377, 360330, 76985, 25722, 6532, 8578, 1, 1, 469, 1605, 7507]
+        # weight_tensor = np.array(weight_tensor_list)
         if output_mode == "classification":
+            # preds_labels = []
+            # for p in preds:
+            #     p = np.divide(p[0], weight_tensor)
+            #     preds_labels.append(np.argmax(p))
             preds = np.argmax(preds, axis=2)
             preds = np.transpose(preds)[0]
+            # preds = np.array(preds_labels)
         elif output_mode == "regression":
             preds = np.squeeze(preds)
         result = compute_metrics(task_name, preds, all_label_ids.numpy(), all_tolerances.numpy())

@@ -405,6 +405,22 @@ class BertEncoder(nn.Module):
         return all_encoder_layers
 
 
+class BertEncoderPredicate(nn.Module):
+    def __init__(self, config):
+        super(BertEncoderPredicate, self).__init__()
+        layer = BertLayer(config)
+        self.layer = nn.ModuleList([copy.deepcopy(layer) for _ in range(2)])
+
+    def forward(self, hidden_states, attention_mask):
+        extended_attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
+        extended_attention_mask = extended_attention_mask.to(dtype=next(self.parameters()).dtype) # fp16 compatibility
+        extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
+
+        for layer_module in self.layer:
+            hidden_states = layer_module(hidden_states, extended_attention_mask)
+        return hidden_states
+
+
 class BertPooler(nn.Module):
     def __init__(self, config):
         super(BertPooler, self).__init__()
@@ -1033,14 +1049,29 @@ class BertForTemporalClassification(BertPreTrainedModel):
         self.num_labels = num_labels
         self.bert = BertModel(config)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        self.classifier = nn.Linear(config.hidden_size, num_labels)
+        self.classifier = nn.Linear(config.hidden_size * 2, num_labels)
         self.apply(self.init_bert_weights)
 
-    def forward(self, input_ids, token_type_ids=None, attention_mask=None, labels=None, target_idx=None):
+        self.subj_attention = BertEncoderPredicate(config)
+        self.obj_attention = BertEncoderPredicate(config)
+
+
+    def forward(self, input_ids, token_type_ids=None, attention_mask=None, labels=None, target_idx=None, subj_mask=None, obj_mask=None):
         sequence_output, _ = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False)
         target_token_output = sequence_output.gather(1, target_idx.view(-1, 1).unsqueeze(2).repeat(1, 1, sequence_output.size(2)))
-        pooled_output = self.dropout(target_token_output)
-        logits = self.classifier(pooled_output)
+
+        # pooled_output = self.dropout(target_token_output)
+        # logits = self.classifier(pooled_output)
+
+        subj_output = self.subj_attention(sequence_output, subj_mask)
+        target_subj_output = subj_output.gather(1, target_idx.view(-1, 1).unsqueeze(2).repeat(1, 1, subj_output.size(2)))
+
+        obj_output = self.obj_attention(sequence_output, obj_mask)
+        target_obj_output = subj_output.gather(1, target_idx.view(-1, 1).unsqueeze(2).repeat(1, 1, obj_output.size(2)))
+
+        states = torch.cat((target_subj_output, target_obj_output), 2)
+        states = self.dropout(states)
+        logits = self.classifier(states)
 
         if labels is not None:
             loss_fct = CrossEntropyLoss()

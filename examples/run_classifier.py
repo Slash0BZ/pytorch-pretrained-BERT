@@ -267,6 +267,75 @@ class TemporalNominalProcessor(DataProcessor):
         return examples
 
 
+class TemporalVerbProcessor(DataProcessor):
+
+    def get_train_examples(self, data_dir):
+        """See base class."""
+        f = open(os.path.join(data_dir, "train.txt"), "r")
+        lines = [x.strip() for x in f.readlines()]
+        return self._create_examples(lines, "train")
+
+    def get_dev_examples(self, data_dir):
+        f = open(os.path.join(data_dir, "test.txt"), "r")
+        lines = [x.strip() for x in f.readlines()]
+        return self._create_examples(lines, "dev")
+
+    def get_labels(self):
+        return [None]
+
+    def _create_examples(self, lines, set_type):
+        """Creates examples for the training and dev sets."""
+        examples = []
+        value_map = {
+            "second": 1.0,
+            "seconds": 1.0,
+            "minute": 60.0,
+            "minutes": 60.0,
+            "hour": 60.0 * 60.0,
+            "hours": 60.0 * 60.0,
+            "day": 24.0 * 60.0 * 60.0,
+            "days": 24.0 * 60.0 * 60.0,
+            "week": 7.0 * 24.0 * 60.0 * 60.0,
+            "weeks": 7.0 * 24.0 * 60.0 * 60.0,
+            "month": 28.0 * 24.0 * 60.0 * 60.0,
+            "months": 28.0 * 24.0 * 60.0 * 60.0,
+            "year": 336.0 * 24.0 * 60.0 * 60.0,
+            "years": 336.0 * 24.0 * 60.0 * 60.0,
+            "century": 100.0 * 336.0 * 24.0 * 60.0 * 60.0,
+            "centuries": 100.0 * 336.0 * 24.0 * 60.0 * 60.0,
+        }
+        for (i, line) in enumerate(lines):
+            groups = line.split("\t")
+            guid = "%s-%s" % (set_type, i)
+            text_a = groups[0]
+            if len(text_a.split()) > 120:
+                continue
+            target_idx = int(groups[1])
+            label_raw = groups[2]
+            label_num = float(label_raw.split(" ")[0])
+            if label_num < 1.0:
+                continue
+            label_unit = label_raw.split(" ")[1].lower()
+            label_idx = label_num * value_map[label_unit] / 1451520000.0
+            if label_idx > 1.0:
+                continue
+            subj_mask = [0] * len(text_a.split())
+            obj_mask = [0] * len(text_a.split())
+
+            if int(groups[3]) > -1:
+                for j in range(int(groups[3]), int(groups[4])):
+                    subj_mask[j] = 1
+            if int(groups[5]) > -1:
+                for j in range(int(groups[5]), int(groups[6])):
+                    obj_mask[j] = 1
+
+            examples.append(
+                InputExample(
+                    guid=guid, text_a=text_a, label=label_idx, target_idx=target_idx, subj_mask=subj_mask, obj_mask=obj_mask
+                ))
+        return examples
+
+
 class TimebankProcessor(DataProcessor):
 
     def get_train_examples(self, data_dir):
@@ -858,15 +927,15 @@ def day_classification(preds, labels):
     for i, l in enumerate(labels):
         if l < 15:
             small_total += 1.0
-            if preds[i] < 15:
+            if preds[i] == 0:
                 small_correct += 1.0
         else:
             big_total += 1.0
-            if preds[i] >= 15:
+            if preds[i] == 1:
                 big_correct += 1.0
 
     for p in preds:
-        if p < 15:
+        if p == 0:
             small_predicted += 1.0
         else:
             big_predicted += 1.0
@@ -952,8 +1021,27 @@ def compute_metrics(task_name, preds, labels, additional=None):
         return acc_and_f1(preds, labels, additional)
     elif task_name == "timebank":
         return acc_and_f1(preds, labels, additional)
+    elif task_name == "tempoalverb":
+        return avg_hit_loss(preds, labels)
     else:
         raise KeyError(task_name)
+
+
+oneDivSqrtTwoPI = 1.0 / np.sqrt(2.0*np.pi) # normalization factor for Gaussians
+
+
+def gaussian_distribution(y, mu, sigma):
+    # make |mu|=K copies of y, subtract mu, divide by sigma
+    result = (y.expand_as(mu) - mu) * torch.reciprocal(sigma)
+    result = -0.5 * (result * result)
+    return (torch.exp(result) * torch.reciprocal(sigma)) * oneDivSqrtTwoPI
+
+
+def mdn_loss_fn(pi, sigma, mu, y):
+    result = gaussian_distribution(y, mu, sigma) * pi
+    result = torch.sum(result, dim=1)
+    result = -torch.log(result)
+    return torch.mean(result)
 
 
 def main():
@@ -1069,6 +1157,7 @@ def main():
         "animal": AnimalProcessor,
         "temporalnom": TemporalNominalProcessor,
         "timebank": TimebankProcessor,
+        "temporalverb": TemporalVerbProcessor,
     }
 
     output_modes = {
@@ -1083,7 +1172,8 @@ def main():
         "wnli": "classification",
         "animal": "regression",
         "temporalnom": "classification",
-        "timebank": "classification"
+        "timebank": "regression",
+        "temporalverb": "regression",
     }
 
     if args.local_rank == -1 or args.no_cuda:
@@ -1191,12 +1281,6 @@ def main():
     global_step = 0
     nb_tr_steps = 0
     tr_loss = 0
-    loss_weight = torch.tensor(
-        [12599, 5532, 5457, 3349, 8380, 42760, 19599, 10153, 6953, 11107, 26586, 7530, 3196, 1023, 52578, 526,
-         23604, 23646, 6606, 20617, 1, 13602, 37940, 17273, 13138, 44364, 37647, 37295, 9576, 41377, 360330, 76985,
-         25722, 6532, 8578, 1, 1, 469, 1605, 7507]
-    ).float().to(device) / float(1031837)
-    print(loss_weight)
     if args.do_train:
         train_features = convert_examples_to_features(
             train_examples, label_list, args.max_seq_length, tokenizer, output_mode)
@@ -1235,19 +1319,13 @@ def main():
                 input_ids, input_mask, segment_ids, label_ids, target_idxs, subj_masks, obj_masks = batch
 
                 # define a new function to compute loss values for both output_modes
-                logits = model(input_ids, segment_ids, input_mask, labels=None, target_idx=target_idxs, subj_mask=subj_masks, obj_mask=obj_masks)
+                pi, mu, sigma = model(input_ids, segment_ids, input_mask, labels=None, target_idx=target_idxs, subj_mask=subj_masks, obj_mask=obj_masks)
 
                 if output_mode == "classification":
-                    loss_fct = CrossEntropyLoss(weight=loss_weight)
-                    # loss_fct = BCEWithLogitsLoss()
-                    # label_onehot = torch.FloatTensor(logits.view(-1, num_labels).size(0), num_labels).cuda()
-                    # label_onehot.zero_()
-                    # label_onehot.scatter_(1, label_ids.view(-1, 1), 1)
-                    # loss = loss_fct(logits.view(-1, num_labels), label_onehot.view(-1, num_labels))
-                    loss = loss_fct(logits.view(-1, num_labels), label_ids.view(-1))
+                    loss = None
                 elif output_mode == "regression":
-                    loss_fct = MSELoss()
-                    loss = loss_fct(logits.view(-1), label_ids.view(-1))
+                    label_ids = label_ids.unsqueeze(1)
+                    loss = mdn_loss_fn(pi, sigma, mu, label_ids)
 
                 if n_gpu > 1:
                     loss = loss.mean() # mean() to average on multi-gpu.
@@ -1343,51 +1421,70 @@ def main():
             obj_masks = obj_masks.to(device)
 
             with torch.no_grad():
-                logits = model(input_ids, segment_ids, input_mask, labels=None, target_idx=target_idxs, subj_mask=subj_masks, obj_mask=obj_masks)
-                logits_numpy = logits.view(-1, num_labels).detach().cpu().numpy()
-                for l in logits_numpy:
-                    for ll in l:
-                        f_logits_out.write(str(ll) + "\t")
-                    f_logits_out.write("\n")
+                pi, mu, sigma = model(input_ids, segment_ids, input_mask, labels=None, target_idx=target_idxs, subj_mask=subj_masks, obj_mask=obj_masks)
 
             # create eval loss and other metric required by the task
             if output_mode == "classification":
-                loss_fct = CrossEntropyLoss(weight=loss_weight)
-                tmp_eval_loss = loss_fct(logits.view(-1, num_labels), label_ids.view(-1))
+                loss = None
+                # loss_fct = CrossEntropyLoss(weight=loss_weight)
+                # tmp_eval_loss = loss_fct(logits.view(-1, num_labels), label_ids.view(-1))
             elif output_mode == "regression":
-                loss_fct = MSELoss()
-                tmp_eval_loss = loss_fct(logits.view(-1), label_ids.view(-1))
-            
-            eval_loss += tmp_eval_loss.mean().item()
+                m = torch.distributions.Normal(loc=mu, scale=sigma)
+                divident = 1451520000.0
+                day_val = 24.0 * 3600.0 / divident
+                day_cdf = torch.sum(m.cdf(day_val) * pi, dim=1).detach().cpu().numpy()
+                rest_cdf = torch.sum(m.cdf(1.0) * pi, dim=1).detach().cpu().numpy()
+                zero_cdf = torch.sum(m.cdf(0.0) * pi, dim=1).detach().cpu().numpy()
+                for i, v in enumerate(day_cdf):
+                    if v >= 0.3 * rest_cdf[i]:
+                        preds.append(0)
+                    else:
+                        preds.append(1)
+
+                # prev = None
+                # tmp_map = {}
+                # for i in range(0, 100):
+                #     val = float(i) * 3600.0 * 24 / divident
+                #     cdf = torch.sum(m.cdf(val) * pi, dim=1).detach().cpu().numpy()
+                #     cdf_copy = torch.sum(m.cdf(val) * pi, dim=1).detach().cpu().numpy()
+                #     if prev is not None:
+                #         cdf = np.subtract(cdf, prev)
+                #     for j, c in enumerate(cdf):
+                #         if j not in tmp_map:
+                #             tmp_map[j] = []
+                #         tmp_map[j].append(c)
+                #     prev = cdf_copy
+                # for i in range(0, 8):
+                #     if i not in tmp_map:
+                #         break
+                #     vals = tmp_map[i]
+                #     concat = ""
+                #     for v in vals:
+                #         concat += str(v) + "\t"
+                #     concat += "\n"
+                #     f_logits_out.write(concat)
+
+
             nb_eval_steps += 1
-            if len(preds) == 0:
-                preds.append(logits.detach().cpu().numpy())
-            else:
-                preds[0] = np.append(
-                    preds[0], logits.detach().cpu().numpy(), axis=0)
+            # if len(preds) == 0:
+            #     preds.append(logits.detach().cpu().numpy())
+            # else:
+            #     preds[0] = np.append(
+            #         preds[0], logits.detach().cpu().numpy(), axis=0)
 
         eval_loss = eval_loss / nb_eval_steps
-        preds = preds[0]
-        # print(preds.shape)
-        # weight_tensor_list = [12599, 5532, 5457, 3349, 8380, 42760, 19599, 10153, 6953, 11107, 26586, 7530, 3196, 1023, 52578, 526, 23604, 23646, 6606, 20617, 1, 13602, 37940, 17273, 13138, 44364, 37647, 37295, 9576, 41377, 360330, 76985, 25722, 6532, 8578, 1, 1, 469, 1605, 7507]
-        # weight_tensor = np.array(weight_tensor_list)
+        # preds = preds[0]
         if output_mode == "classification":
-            # preds_labels = []
-            # for p in preds:
-            #     p = np.divide(p[0], weight_tensor)
-            #     preds_labels.append(np.argmax(p))
-            preds = np.argmax(preds, axis=2)
-            preds = np.transpose(preds)[0]
-            # preds = np.array(preds_labels)
+            pass
         elif output_mode == "regression":
-            preds = np.squeeze(preds)
+            pass
         result = compute_metrics(task_name, preds, all_label_ids.numpy(), all_tolerances.numpy())
         loss = tr_loss/nb_tr_steps if args.do_train else None
-
+        #
         result['eval_loss'] = eval_loss
         result['global_step'] = global_step
         result['loss'] = loss
-
+        #
         output_eval_file = os.path.join(args.output_dir, "eval_results.txt")
         with open(output_eval_file, "w") as writer:
             logger.info("***** Eval results *****")

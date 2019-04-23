@@ -1049,19 +1049,22 @@ class BertForTemporalClassification(BertPreTrainedModel):
         self.num_labels = num_labels
         self.bert = BertModel(config)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        self.classifier = nn.Linear(config.hidden_size * 2, num_labels)
-        self.apply(self.init_bert_weights)
+        # self.classifier = nn.Linear(config.hidden_size * 2, num_labels)
 
         self.subj_attention = BertEncoderPredicate(config)
         self.obj_attention = BertEncoderPredicate(config)
+        self.all_attention = BertEncoderPredicate(config)
 
+        self.n_gussians = 5
+
+        self.pi_classifier = nn.Linear(config.hidden_size * 2, self.n_gussians)
+        self.mu_classifier = nn.Linear(config.hidden_size * 2, self.n_gussians)
+        self.sigma_classifier = nn.Linear(config.hidden_size * 2, self.n_gussians)
+
+        self.apply(self.init_bert_weights)
 
     def forward(self, input_ids, token_type_ids=None, attention_mask=None, labels=None, target_idx=None, subj_mask=None, obj_mask=None):
         sequence_output, _ = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False)
-        target_token_output = sequence_output.gather(1, target_idx.view(-1, 1).unsqueeze(2).repeat(1, 1, sequence_output.size(2)))
-
-        # pooled_output = self.dropout(target_token_output)
-        # logits = self.classifier(pooled_output)
 
         subj_output = self.subj_attention(sequence_output, subj_mask)
         target_subj_output = subj_output.gather(1, target_idx.view(-1, 1).unsqueeze(2).repeat(1, 1, subj_output.size(2)))
@@ -1069,16 +1072,25 @@ class BertForTemporalClassification(BertPreTrainedModel):
         obj_output = self.obj_attention(sequence_output, obj_mask)
         target_obj_output = subj_output.gather(1, target_idx.view(-1, 1).unsqueeze(2).repeat(1, 1, obj_output.size(2)))
 
+        # all_output = self.all_attention(sequence_output, attention_mask)
+        # target_all_output = all_output.gather(1, target_idx.view(-1, 1).unsqueeze(2).repeat(1, 1, all_output.size(2)))
+
+        # states = torch.cat((torch.cat((target_subj_output, target_obj_output), 2), target_all_output), 2)
         states = torch.cat((target_subj_output, target_obj_output), 2)
         states = self.dropout(states)
-        logits = self.classifier(states)
+
+        pi = nn.functional.softmax(self.pi_classifier(states), -1)
+        mu = self.mu_classifier(states)
+        sigma = torch.exp(self.sigma_classifier(states))
 
         if labels is not None:
-            loss_fct = CrossEntropyLoss()
-            loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
-            return loss
+            """NOT IN USE"""
+            # loss_fct = CrossEntropyLoss()
+            # loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
+            # return loss
+            return None
         else:
-            return logits
+            return pi.view(-1, self.n_gussians), mu.view(-1, self.n_gussians), sigma.view(-1, self.n_gussians)
 
 
 class BertForMultipleChoice(BertPreTrainedModel):

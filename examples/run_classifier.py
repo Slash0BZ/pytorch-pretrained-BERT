@@ -1460,7 +1460,6 @@ def main():
         for input_ids, input_mask, segment_ids, label_ids, target_idxs, tolerances, subj_masks, obj_masks in tqdm(eval_dataloader, desc="Evaluating"):
             input_ids = input_ids.to(device)
             input_mask = input_mask.to(device)
-            input_mask = input_mask.to(device)
             segment_ids = segment_ids.to(device)
             label_ids = label_ids.to(device)
             target_idxs = target_idxs.to(device)

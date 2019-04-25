@@ -1055,7 +1055,7 @@ class BertForTemporalClassification(BertPreTrainedModel):
         self.obj_attention = BertEncoderPredicate(config)
         self.all_attention = BertEncoderPredicate(config)
 
-        self.n_gussians = 5
+        self.n_gussians = 2
 
         self.pi_classifier = nn.Linear(config.hidden_size * 2, self.n_gussians)
         self.mu_classifier = nn.Linear(config.hidden_size * 2, self.n_gussians)

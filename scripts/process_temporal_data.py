@@ -4,9 +4,11 @@ import jsonlines
 import pickle
 import random
 import json
+import numpy as np
 from word2number import w2n
 from ccg_nlpy import local_pipeline
 from math import floor
+from scipy.stats import norm
 import matplotlib.pyplot as plt
 # from allennlp import predictors
 # from allennlp.predictors import Predictor
@@ -997,6 +999,46 @@ class VerbBaseline:
         else:
             return 1
 
+    def find_distribution(self):
+        with open("samples/duration/verb_formatted_all_svo.txt") as f_in:
+            lines = [x.strip() for x in f_in.readlines()]
+
+        result_map = {}
+        cared_verb = ["make", "made", "making"]
+        cared_arg = ["breakfast", "lunch", "dinner", "coffee", "tea", "trip", "money"]
+        for line in lines:
+            groups = line.split("\t")
+            tokens = groups[0].split()
+            verb = tokens[int(groups[1])]
+            arg_start = int(groups[5])
+            arg_end = int(groups[6])
+
+            if verb.lower() not in cared_verb:
+                continue
+            for i in range(arg_start, arg_end):
+                if tokens[i].lower() in cared_arg:
+                    key = tokens[i].lower()
+                    if key not in result_map:
+                        result_map[key] = []
+                    result_map[key].append(float(groups[2].split()[0]) * self.convert_map[groups[2].split()[1]])
+        f_out = open("tmp_output.txt", "w")
+        for key in result_map:
+            mu, std = norm.fit(np.array(result_map[key]))
+            plt.hist(np.array(result_map[key]), bins=25, density=True, alpha=0.6, color='g')
+
+            # Plot the PDF.
+            xmin, xmax = plt.xlim()
+            x = np.linspace(xmin, xmax, 100)
+            p = norm.pdf(x, mu, std)
+            plt.plot(x, p, 'k', linewidth=2)
+            title = key
+            plt.title(title)
+
+            plt.show()
+
+            f_out.write(key + "\n")
+            f_out.write(str(result_map[key]) + "\n")
+
     def test_file(self, map_path, path):
         with open(map_path, "rb") as f_in:
             cur_map = pickle.load(f_in)
@@ -1075,6 +1117,70 @@ class VerbBaseline:
             print()
 
 
+class VerbPhysicsEval:
+
+    def __init__(self):
+        pass
+
+    def process_raw_file(self, paths, out_path):
+        lines = []
+        for path in paths:
+            lines +=  [x.strip() for x in open(path).readlines()]
+        obj_set = set()
+        for line in lines:
+            if line[0] == ",":
+                continue
+            obj_set.add(line.split(",")[1])
+            obj_set.add(line.split(",")[2])
+
+        verbs = ["clean", "make", "build", "use", "move"]
+        pronouns = ["he", "they", "I"]
+        rest = "\t1\t1.0 hour\t0\t1\t2\t3\n"
+        f_out = open(out_path, "w")
+        for obj in obj_set:
+            for v in verbs:
+                for p in pronouns:
+                    sentence = p + " " + v + " " + obj + " ."
+                    f_out.write(sentence + rest)
+
+    def add_list(self, a, b):
+        for i, _ in enumerate(a):
+            a[i] += b[i]
+        return a
+
+    def process_embedding_file(self, sent_path, embed_path):
+        sent_lines = [x.strip() for x in open(sent_path).readlines()]
+        embed_lines = [x.strip() for x in open(embed_path).readlines()]
+
+        obj_map = {}
+        for i, l, in enumerate(sent_lines):
+            sent = l.split("\t")[0]
+            obj = sent.split()[2]
+            verb = sent.split()[1]
+
+            if obj not in obj_map:
+                obj_map[obj] = {}
+            if verb not in obj_map[obj]:
+                obj_map[obj][verb] = [0.0] * 300
+
+            embed_list = [float(x) for x in embed_lines[i].split("\t")]
+            obj_map[obj][verb] = self.add_list(obj_map[obj][verb], embed_list)
+
+        verbs = ["clean", "make", "build", "use", "move"]
+        embedding_file = open("samples/verbphysics/train-5/obj_embedding.pkl", "wb")
+        embed_map = {}
+        for key in obj_map:
+            main_list = []
+            for v in verbs:
+                main_list += obj_map[key][v]
+            assert len(main_list) == 1500
+            embed_map[key] = main_list
+
+        pickle.dump(embed_map, embedding_file)
+
+
+
+
 if __name__ == "__main__":
     # extractor = GigawordExtractor()
     # extractor.get_rid_of_masks("samples/verbs/test.txt", "samples/verbs_nonmask/test.txt")
@@ -1087,8 +1193,8 @@ if __name__ == "__main__":
     # srl = AllenSRL()
     # srl.predict_file("samples/duration_afp_eng_filtered.txt")
 
-    runner = SRLRunner()
-    runner.count_label("samples/duration/verb_formatted_all_svo.txt")
+    # runner = SRLRunner()
+    # runner.count_label("samples/duration/verb_formatted_all_svo.txt")
     # runner.prepare_timebank_srl()
     # runner.prepare_timebank_file()
     # runner.parse_srl_file("samples/duration_srl_verbs.476452.jsonl")
@@ -1107,4 +1213,8 @@ if __name__ == "__main__":
     # VerbBaseline.exp_output("samples/duration/all/nearest_verb.pkl", "work")
 
     # baseline = VerbBaseline("")
+    # baseline.find_distribution()
     # baseline.test_file("samples/duration/all/nearest_verb.pkl", "samples/duration/timebank_formatted.txt")
+
+    verbphysics = VerbPhysicsEval()
+    verbphysics.process_embedding_file("samples/verbphysics/train-5/obj_file.txt", "result_logits.txt")

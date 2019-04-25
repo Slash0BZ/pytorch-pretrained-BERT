@@ -23,6 +23,7 @@ import logging
 import os
 import random
 import sys
+import math
 
 import numpy as np
 import torch
@@ -316,7 +317,8 @@ class TemporalVerbProcessor(DataProcessor):
             if label_num < 1.0:
                 continue
             label_unit = label_raw.split(" ")[1].lower()
-            label_idx = label_num * value_map[label_unit] / 1451520000.0
+            # label_idx = label_num * value_map[label_unit] / 2592000.0
+            label_idx = math.log(label_num * value_map[label_unit]) / 22.0
             if label_idx > 1.0:
                 continue
             subj_mask = [0] * len(text_a.split())
@@ -350,12 +352,14 @@ class TimebankProcessor(DataProcessor):
         return self._create_examples(lines, "dev")
 
     def get_labels(self):
-        return [str(x) for x in range(40)]
+        # return [str(x) for x in range(40)]
+        return [0, 1]
 
     def get_label_from_expression(self, exp):
         if exp == "NULL":
             return None
         unit = ""
+        day_label = 0
         unit_map = {
             "second": 0.0,
             "seconds": 0.0,
@@ -392,6 +396,24 @@ class TimebankProcessor(DataProcessor):
             "century": 2.0,
             "centuries": 2.0,
         }
+        value_map = {
+            "second": 1.0,
+            "seconds": 1.0,
+            "minute": 60.0,
+            "minutes": 60.0,
+            "hour": 60.0 * 60.0,
+            "hours": 60.0 * 60.0,
+            "day": 24.0 * 60.0 * 60.0,
+            "days": 24.0 * 60.0 * 60.0,
+            "week": 7.0 * 24.0 * 60.0 * 60.0,
+            "weeks": 7.0 * 24.0 * 60.0 * 60.0,
+            "month": 28.0 * 24.0 * 60.0 * 60.0,
+            "months": 28.0 * 24.0 * 60.0 * 60.0,
+            "year": 336.0 * 24.0 * 60.0 * 60.0,
+            "years": 336.0 * 24.0 * 60.0 * 60.0,
+            "century": 100.0 * 336.0 * 24.0 * 60.0 * 60.0,
+            "centuries": 100.0 * 336.0 * 24.0 * 60.0 * 60.0,
+        }
         if exp.startswith("PT") and exp[-1] == "M":
             unit = "minute"
         if exp[-1] == "M" and exp[1] != "T":
@@ -410,6 +432,7 @@ class TimebankProcessor(DataProcessor):
         if exp.startswith("PT"):
             exp = exp[2:]
         else:
+            day_label = 1
             exp = exp[1:]
 
         exp = exp[:-1]
@@ -426,7 +449,7 @@ class TimebankProcessor(DataProcessor):
             label_idx = 0
         label_idx = unit_map[label_unit] * 5.0 + label_idx
 
-        return label_idx
+        return label_idx, day_label, label_num * value_map[unit]
 
     def _create_examples(self, lines, set_type):
         """Creates examples for the training and dev sets."""
@@ -438,8 +461,8 @@ class TimebankProcessor(DataProcessor):
             if len(text_a.split()) > 120:
                 continue
             target_idx = int(groups[1])
-            label_lower = self.get_label_from_expression(groups[2])
-            label_upper = self.get_label_from_expression(groups[3])
+            label_lower, day_label, lower_val = self.get_label_from_expression(groups[2])
+            label_upper, _, upper_val = self.get_label_from_expression(groups[3])
 
             if label_lower is None or label_upper is None or label_lower > label_upper:
                 continue
@@ -455,8 +478,22 @@ class TimebankProcessor(DataProcessor):
                     obj_mask[j] = 1
 
             label_num = int(float(label_upper + label_lower) / 2.0)
+
+            lower_e = math.log(lower_val)
+            upper_e = math.log(upper_val)
+
+            if (lower_e + upper_e) / 2.0 >= 11.367:
+                true_label = 1
+            else:
+                true_label = 0
+
+            # examples.append(
+            #     InputExample(guid=guid, text_a=text_a, label=str(label_num), target_idx=target_idx, tolerance=max(1, max(
+            #         abs(label_lower - label_num), abs(label_upper - label_num)
+            #     )), subj_mask=subj_mask, obj_mask=obj_mask)
+            # )
             examples.append(
-                InputExample(guid=guid, text_a=text_a, label=str(label_num), target_idx=target_idx, tolerance=max(1, max(
+                InputExample(guid=guid, text_a=text_a, label=true_label, target_idx=target_idx, tolerance=max(1, max(
                     abs(label_lower - label_num), abs(label_upper - label_num)
                 )), subj_mask=subj_mask, obj_mask=obj_mask)
             )
@@ -857,7 +894,8 @@ def simple_accuracy(preds, labels, tolerances=None):
     correct = 0.0
     if tolerances is not None:
         for i, v in enumerate(preds):
-            if labels[i] - tolerances[i] <= preds[i] <= labels[i] + tolerances[i]:
+            if preds[i] == labels[i]:
+            # if labels[i] - tolerances[i] <= preds[i] <= labels[i] + tolerances[i]:
                 correct += 1.0
         return correct / float(len(preds))
     else:
@@ -925,7 +963,7 @@ def day_classification(preds, labels):
     big_predicted = 0.0
 
     for i, l in enumerate(labels):
-        if l < 15:
+        if l == 0:
             small_total += 1.0
             if preds[i] == 0:
                 small_correct += 1.0
@@ -1041,6 +1079,15 @@ def mdn_loss_fn(pi, sigma, mu, y):
     result = gaussian_distribution(y, mu, sigma) * pi
     result = torch.sum(result, dim=1)
     result = -torch.log(result)
+    # print(result)
+
+    m = torch.distributions.Normal(loc=mu, scale=sigma)
+    zero_cdf = torch.sum(m.cdf(0.0) * pi, dim=1)
+    result += zero_cdf * 10.0
+    # print(zero_cdf)
+    # result += torch.log(zero_cdf)
+    # print(result)
+
     return torch.mean(result)
 
 
@@ -1430,21 +1477,23 @@ def main():
                 # tmp_eval_loss = loss_fct(logits.view(-1, num_labels), label_ids.view(-1))
             elif output_mode == "regression":
                 m = torch.distributions.Normal(loc=mu, scale=sigma)
-                divident = 1451520000.0
+                # divident = 1451520000.0
+                divident = 2592000.0
                 day_val = 24.0 * 3600.0 / divident
                 day_cdf = torch.sum(m.cdf(day_val) * pi, dim=1).detach().cpu().numpy()
                 rest_cdf = torch.sum(m.cdf(1.0) * pi, dim=1).detach().cpu().numpy()
                 zero_cdf = torch.sum(m.cdf(0.0) * pi, dim=1).detach().cpu().numpy()
                 for i, v in enumerate(day_cdf):
-                    if v >= 0.3 * rest_cdf[i]:
+                    if v >= 0.5 * rest_cdf[i]:
                         preds.append(0)
                     else:
                         preds.append(1)
 
                 # prev = None
                 # tmp_map = {}
-                # for i in range(0, 100):
-                #     val = float(i) * 3600.0 * 24 / divident
+                # for i in range(-180, 720):
+                #     # val = float(math.exp(float(i))) / divident
+                #     val = float(i) * 600 / divident
                 #     cdf = torch.sum(m.cdf(val) * pi, dim=1).detach().cpu().numpy()
                 #     cdf_copy = torch.sum(m.cdf(val) * pi, dim=1).detach().cpu().numpy()
                 #     if prev is not None:
@@ -1464,6 +1513,29 @@ def main():
                 #     concat += "\n"
                 #     f_logits_out.write(concat)
 
+                prev = None
+                tmp_map = {}
+                for i in range(0, 600):
+                    # val = float(math.exp(float(i))) / divident
+                    val = float(i) * 4320.0 / divident
+                    cdf = torch.sum(m.cdf(val) * pi, dim=1).detach().cpu().numpy()
+                    cdf_copy = torch.sum(m.cdf(val) * pi, dim=1).detach().cpu().numpy()
+                    if prev is not None:
+                        cdf = np.subtract(cdf, prev)
+                    for j, c in enumerate(cdf):
+                        if j not in tmp_map:
+                            tmp_map[j] = []
+                        tmp_map[j].append(c)
+                    prev = cdf_copy
+                for i in range(0, 8):
+                    if i not in tmp_map:
+                        break
+                    vals = tmp_map[i]
+                    concat = ""
+                    for v in vals:
+                        concat += str(v) + "\t"
+                    concat += "\n"
+                    f_logits_out.write(concat)
 
             nb_eval_steps += 1
             # if len(preds) == 0:

@@ -1133,8 +1133,8 @@ class VerbPhysicsEval:
             obj_set.add(line.split(",")[1])
             obj_set.add(line.split(",")[2])
 
-        verbs = ["clean", "make", "build", "use", "move"]
-        pronouns = ["he", "they", "I"]
+        verbs = ["clean", "make", "build", "use", "move", "lift", "take", "try", "play", "hold"]
+        pronouns = ["he", "they", "I", "she"]
         rest = "\t1\t1.0 hour\t0\t1\t2\t3\n"
         f_out = open(out_path, "w")
         for obj in obj_set:
@@ -1161,13 +1161,14 @@ class VerbPhysicsEval:
             if obj not in obj_map:
                 obj_map[obj] = {}
             if verb not in obj_map[obj]:
-                obj_map[obj][verb] = [0.0] * 300
+                obj_map[obj][verb] = [0.0] * 150
 
             embed_list = [float(x) for x in embed_lines[i].split("\t")]
             obj_map[obj][verb] = self.add_list(obj_map[obj][verb], embed_list)
 
-        verbs = ["clean", "make", "build", "use", "move"]
-        embedding_file = open("samples/verbphysics/train-5/obj_embedding.pkl", "wb")
+        # verbs = ["clean", "make", "build", "use", "move"]
+        verbs = ["clean", "make", "build", "use", "move", "lift", "take", "try", "play", "hold"]
+        embedding_file = open("samples/verbphysics/train-5/obj_embedding_10v_1h.pkl", "wb")
         embed_map = {}
         for key in obj_map:
             main_list = []
@@ -1217,4 +1218,8 @@ if __name__ == "__main__":
     # baseline.test_file("samples/duration/all/nearest_verb.pkl", "samples/duration/timebank_formatted.txt")
 
     verbphysics = VerbPhysicsEval()
-    verbphysics.process_embedding_file("samples/verbphysics/train-5/obj_file.txt", "result_logits.txt")
+    # verbphysics.process_raw_file([
+    #     "samples/verbphysics/train-5/train.csv",
+    #     "samples/verbphysics/train-5/test.csv",
+    #     "samples/verbphysics/train-5/dev.csv",], "samples/verbphysics/train-5/obj_file_10v.txt")
+    verbphysics.process_embedding_file("samples/verbphysics/train-5/obj_file_10v.txt", "result_logits.txt")

@@ -1514,9 +1514,9 @@ def main():
 
                 prev = None
                 tmp_map = {}
-                for i in range(0, 600):
+                for i in range(0, 150):
                     # val = float(math.exp(float(i))) / divident
-                    val = float(i) * 4320.0 / divident
+                    val = float(i) * 3600.0 / divident
                     cdf = torch.sum(m.cdf(val) * pi, dim=1).detach().cpu().numpy()
                     cdf_copy = torch.sum(m.cdf(val) * pi, dim=1).detach().cpu().numpy()
                     if prev is not None:

@@ -1055,11 +1055,25 @@ class BertForTemporalClassification(BertPreTrainedModel):
         self.obj_attention = BertEncoderPredicate(config)
         self.all_attention = BertEncoderPredicate(config)
 
-        self.n_gussians = 2
+        self.n_gussians = 4
 
         self.pi_classifier = nn.Linear(config.hidden_size * 2, self.n_gussians)
         self.mu_classifier = nn.Linear(config.hidden_size * 2, self.n_gussians)
         self.sigma_classifier = nn.Linear(config.hidden_size * 2, self.n_gussians)
+
+        self.main_range = 290304000.0
+        self.mu_weight = torch.tensor([
+            math.exp(5.0) / self.main_range,
+            (math.exp(10.0) - math.exp(5.0)) / self.main_range,
+            (math.exp(15.0) - math.exp(10.0)) / self.main_range,
+            (math.exp(20.0) - math.exp(15.0)) / self.main_range,
+        ], dtype=torch.float).cuda()
+        self.mu_bias = torch.tensor([
+            0,
+            math.exp(5.0) / self.main_range,
+            math.exp(10.0) / self.main_range,
+            math.exp(15.0) / self.main_range,
+        ], dtype=torch.float).cuda()
 
         self.apply(self.init_bert_weights)
 
@@ -1080,7 +1094,9 @@ class BertForTemporalClassification(BertPreTrainedModel):
         states = self.dropout(states)
 
         pi = nn.functional.softmax(self.pi_classifier(states), -1)
-        mu = self.mu_classifier(states)
+        mu = nn.functional.sigmoid(self.mu_classifier(states)).view(-1, self.n_gussians)
+        mu = mu * self.mu_weight.repeat(mu.size()[0], 1)
+        mu = mu + self.mu_bias.repeat(mu.size()[0], 1)
         sigma = torch.exp(self.sigma_classifier(states))
 
         if labels is not None:

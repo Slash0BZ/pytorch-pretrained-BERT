@@ -1133,7 +1133,11 @@ class VerbPhysicsEval:
             obj_set.add(line.split(",")[1])
             obj_set.add(line.split(",")[2])
 
-        verbs = ["clean", "make", "build", "use", "move", "lift", "take", "try", "play", "hold"]
+        verbs = [
+            "clean", "make", "build", "use", "move",
+            "lift", "take", "try", "play", "hold",
+            "turn", "cut", "throw", "open", "wash"
+        ]
         pronouns = ["he", "they", "I", "she"]
         rest = "\t1\t1.0 hour\t0\t1\t2\t3\n"
         f_out = open(out_path, "w")
@@ -1146,6 +1150,11 @@ class VerbPhysicsEval:
     def add_list(self, a, b):
         for i, _ in enumerate(a):
             a[i] += b[i]
+        return a
+
+    def div_list(self, a, b):
+        for i, _ in enumerate(a):
+            a[i] = a[i] / b
         return a
 
     def process_embedding_file(self, sent_path, embed_path):
@@ -1161,19 +1170,24 @@ class VerbPhysicsEval:
             if obj not in obj_map:
                 obj_map[obj] = {}
             if verb not in obj_map[obj]:
-                obj_map[obj][verb] = [0.0] * 150
+                obj_map[obj][verb] = [0.0] * 100
 
             embed_list = [float(x) for x in embed_lines[i].split("\t")]
             obj_map[obj][verb] = self.add_list(obj_map[obj][verb], embed_list)
 
         # verbs = ["clean", "make", "build", "use", "move"]
-        verbs = ["clean", "make", "build", "use", "move", "lift", "take", "try", "play", "hold"]
-        embedding_file = open("samples/verbphysics/train-5/obj_embedding_10v_1h.pkl", "wb")
+        # verbs = ["clean", "make", "build", "use", "move", "lift", "take", "try", "play", "hold"]
+        verbs = [
+            "clean", "make", "build", "use", "move",
+            "lift", "take", "try", "play", "hold",
+            "turn", "cut", "throw", "open", "wash"
+        ]
+        embedding_file = open("samples/verbphysics/train-5/obj_embedding_15v_1h.pkl", "wb")
         embed_map = {}
         for key in obj_map:
             main_list = []
             for v in verbs:
-                main_list += obj_map[key][v]
+                main_list += self.div_list(obj_map[key][v], 4)
             assert len(main_list) == 1500
             embed_map[key] = main_list
 
@@ -1221,5 +1235,5 @@ if __name__ == "__main__":
     # verbphysics.process_raw_file([
     #     "samples/verbphysics/train-5/train.csv",
     #     "samples/verbphysics/train-5/test.csv",
-    #     "samples/verbphysics/train-5/dev.csv",], "samples/verbphysics/train-5/obj_file_10v.txt")
-    verbphysics.process_embedding_file("samples/verbphysics/train-5/obj_file_10v.txt", "result_logits.txt")
+    #     "samples/verbphysics/train-5/dev.csv",], "samples/verbphysics/train-5/obj_file_15v.txt")
+    verbphysics.process_embedding_file("samples/verbphysics/train-5/obj_file_15v.txt", "result_logits.txt")

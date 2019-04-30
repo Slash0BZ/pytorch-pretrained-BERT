@@ -317,8 +317,9 @@ class TemporalVerbProcessor(DataProcessor):
             if label_num < 1.0:
                 continue
             label_unit = label_raw.split(" ")[1].lower()
+            label_idx = label_num * value_map[label_unit] / 290304000.0
             # label_idx = label_num * value_map[label_unit] / 2592000.0
-            label_idx = math.log(label_num * value_map[label_unit]) / 22.0
+            # label_idx = math.log(label_num * value_map[label_unit]) / 22.0
             if label_idx > 1.0:
                 continue
             subj_mask = [0] * len(text_a.split())
@@ -1079,14 +1080,30 @@ def mdn_loss_fn(pi, sigma, mu, y):
     result = gaussian_distribution(y, mu, sigma) * pi
     result = torch.sum(result, dim=1)
     result = -torch.log(result)
-    # print(result)
 
     m = torch.distributions.Normal(loc=mu, scale=sigma)
     zero_cdf = torch.sum(m.cdf(0.0) * pi, dim=1)
+    zero_cdf[torch.isnan(zero_cdf)] = 0.0
     result += zero_cdf * 10.0
-    # print(zero_cdf)
-    # result += torch.log(zero_cdf)
-    # print(result)
+
+    # factor = 290304000.0
+    # mu_1 = torch.narrow(mu, 1, 0, 1)
+    # mask_1 = torch.where((math.exp(5.0) / factor) > mu_1, mu_1, torch.zeros(mu_1.size()[0], mu_1.size()[1]).cuda())
+    # mask_1 = torch.nonzero(mask_1)
+    # mask_2 = ((math.exp(10.0) / factor) > mu[:, 1]) & (mu[:, 1] > (math.exp(5.0) / factor))
+    # mask_3 = ((math.exp(15.0) / factor) > mu[:, 2]) & (mu[:, 2] > (math.exp(10.0) / factor))
+    # mask_4 = mu[:, 3] > (math.exp(15.0) / factor)
+    #
+    # mask_1 = torch.abs(torch.sum(mask_1, dim=1, dtype=torch.float) - 1)
+    # mask_2 = torch.abs(torch.sum(mask_2, dim=0, dtype=torch.float) - 1)
+    # mask_3 = torch.abs(torch.sum(mask_3, dim=0, dtype=torch.float) - 1)
+    # mask_4 = torch.abs(torch.sum(mask_4, dim=0, dtype=torch.float) - 1)
+
+    # print(torch.mean(zero_cdf * 10.0))
+    # print(torch.mean(mask_1))
+    # print(torch.mean(mask_2))
+    # print(torch.mean(mask_3))
+    # print(torch.mean(mask_4))
 
     return torch.mean(result)
 
@@ -1476,23 +1493,26 @@ def main():
                 # tmp_eval_loss = loss_fct(logits.view(-1, num_labels), label_ids.view(-1))
             elif output_mode == "regression":
                 m = torch.distributions.Normal(loc=mu, scale=sigma)
+                divident = 290304000.0
                 # divident = 1451520000.0
-                divident = 2592000.0
+                # divident = 2592000.0
                 day_val = 24.0 * 3600.0 / divident
                 day_cdf = torch.sum(m.cdf(day_val) * pi, dim=1).detach().cpu().numpy()
                 rest_cdf = torch.sum(m.cdf(1.0) * pi, dim=1).detach().cpu().numpy()
                 zero_cdf = torch.sum(m.cdf(0.0) * pi, dim=1).detach().cpu().numpy()
                 for i, v in enumerate(day_cdf):
-                    if v >= 0.5 * rest_cdf[i]:
+                    if v >= 0.02 * rest_cdf[i]:
                         preds.append(0)
                     else:
                         preds.append(1)
 
                 # prev = None
                 # tmp_map = {}
-                # for i in range(-180, 720):
+                # for i in range(0, 1000):
                 #     # val = float(math.exp(float(i))) / divident
-                #     val = float(i) * 600 / divident
+                #     # val = float(i) / 40.0 / 22.0
+                #     val = float(i) * 290304.0 / divident
+                #     # val = math.log(val) / 22.0
                 #     cdf = torch.sum(m.cdf(val) * pi, dim=1).detach().cpu().numpy()
                 #     cdf_copy = torch.sum(m.cdf(val) * pi, dim=1).detach().cpu().numpy()
                 #     if prev is not None:
@@ -1512,29 +1532,29 @@ def main():
                 #     concat += "\n"
                 #     f_logits_out.write(concat)
 
-                prev = None
-                tmp_map = {}
-                for i in range(0, 150):
-                    # val = float(math.exp(float(i))) / divident
-                    val = float(i) * 3600.0 / divident
-                    cdf = torch.sum(m.cdf(val) * pi, dim=1).detach().cpu().numpy()
-                    cdf_copy = torch.sum(m.cdf(val) * pi, dim=1).detach().cpu().numpy()
-                    if prev is not None:
-                        cdf = np.subtract(cdf, prev)
-                    for j, c in enumerate(cdf):
-                        if j not in tmp_map:
-                            tmp_map[j] = []
-                        tmp_map[j].append(c)
-                    prev = cdf_copy
-                for i in range(0, 8):
-                    if i not in tmp_map:
-                        break
-                    vals = tmp_map[i]
-                    concat = ""
-                    for v in vals:
-                        concat += str(v) + "\t"
-                    concat += "\n"
-                    f_logits_out.write(concat)
+                # prev = None
+                # tmp_map = {}
+                # for i in range(0, 100):
+                #     # val = float(math.exp(float(i))) / divident
+                #     val = float(i) * 3600.0 / divident
+                #     cdf = torch.sum(m.cdf(val) * pi, dim=1).detach().cpu().numpy()
+                #     cdf_copy = torch.sum(m.cdf(val) * pi, dim=1).detach().cpu().numpy()
+                #     if prev is not None:
+                #         cdf = np.subtract(cdf, prev)
+                #     for j, c in enumerate(cdf):
+                #         if j not in tmp_map:
+                #             tmp_map[j] = []
+                #         tmp_map[j].append(c)
+                #     prev = cdf_copy
+                # for i in range(0, 8):
+                #     if i not in tmp_map:
+                #         break
+                #     vals = tmp_map[i]
+                #     concat = ""
+                #     for v in vals:
+                #         concat += str(v) + "\t"
+                #     concat += "\n"
+                #     f_logits_out.write(concat)
 
             nb_eval_steps += 1
             # if len(preds) == 0:

@@ -1073,11 +1073,12 @@ def gaussian_distribution(y, mu, sigma):
     # make |mu|=K copies of y, subtract mu, divide by sigma
     result = (y.expand_as(mu) - mu) * torch.reciprocal(sigma)
     result = -0.5 * (result * result)
-    return (torch.exp(result) * torch.reciprocal(sigma)) * oneDivSqrtTwoPI
+    return torch.add((torch.exp(result) * torch.reciprocal(sigma)) * oneDivSqrtTwoPI, 1e-10)
 
 
 def mdn_loss_fn(pi, sigma, mu, y):
     result = gaussian_distribution(y, mu, sigma) * pi
+    result[torch.isinf(result)] = 1e-10
     result = torch.sum(result, dim=1)
     result = -torch.log(result)
 
@@ -1499,38 +1500,53 @@ def main():
                 day_val = 24.0 * 3600.0 / divident
                 day_cdf = torch.sum(m.cdf(day_val) * pi, dim=1).detach().cpu().numpy()
                 rest_cdf = torch.sum(m.cdf(1.0) * pi, dim=1).detach().cpu().numpy()
-                zero_cdf = torch.sum(m.cdf(0.0) * pi, dim=1).detach().cpu().numpy()
                 for i, v in enumerate(day_cdf):
-                    if v >= 0.02 * rest_cdf[i]:
+                    if v >= 0.26 * rest_cdf[i]:
                         preds.append(0)
                     else:
                         preds.append(1)
 
-                # prev = None
-                # tmp_map = {}
-                # for i in range(0, 1000):
-                #     # val = float(math.exp(float(i))) / divident
-                #     # val = float(i) / 40.0 / 22.0
-                #     val = float(i) * 290304.0 / divident
-                #     # val = math.log(val) / 22.0
-                #     cdf = torch.sum(m.cdf(val) * pi, dim=1).detach().cpu().numpy()
-                #     cdf_copy = torch.sum(m.cdf(val) * pi, dim=1).detach().cpu().numpy()
-                #     if prev is not None:
-                #         cdf = np.subtract(cdf, prev)
-                #     for j, c in enumerate(cdf):
-                #         if j not in tmp_map:
-                #             tmp_map[j] = []
-                #         tmp_map[j].append(c)
-                #     prev = cdf_copy
-                # for i in range(0, 8):
-                #     if i not in tmp_map:
-                #         break
-                #     vals = tmp_map[i]
+                # mu_numpy = mu.detach().cpu().numpy()
+                # sigma_numpy = sigma.detach().cpu().numpy()
+                # pi_numpy = pi.detach().cpu().numpy()
+                # for i in range(0, len(mu_numpy)):
                 #     concat = ""
-                #     for v in vals:
-                #         concat += str(v) + "\t"
-                #     concat += "\n"
-                #     f_logits_out.write(concat)
+                #     for m in mu_numpy[i]:
+                #         concat += str(m) + "\t"
+                #     for m in sigma_numpy[i]:
+                #         concat += str(m) + "\t"
+                #     for m in pi_numpy[i]:
+                #         concat += str(m) + "\t"
+                #     concat = concat[:-1]
+                #     concat = concat[:-1]
+                #     f_logits_out.write(concat + "\n")
+
+
+                prev = None
+                tmp_map = {}
+                for i in range(0, 1000):
+                    # val = float(math.exp(float(i))) / divident
+                    # val = float(i) / 40.0 / 22.0
+                    val = float(i) * 290304.0 / divident
+                    # val = math.log(val) / 22.0
+                    cdf = torch.sum(m.cdf(val) * pi, dim=1).detach().cpu().numpy()
+                    cdf_copy = torch.sum(m.cdf(val) * pi, dim=1).detach().cpu().numpy()
+                    if prev is not None:
+                        cdf = np.subtract(cdf, prev)
+                    for j, c in enumerate(cdf):
+                        if j not in tmp_map:
+                            tmp_map[j] = []
+                        tmp_map[j].append(c)
+                    prev = cdf_copy
+                for i in range(0, 8):
+                    if i not in tmp_map:
+                        break
+                    vals = tmp_map[i]
+                    concat = ""
+                    for v in vals:
+                        concat += str(v) + "\t"
+                    concat += "\n"
+                    f_logits_out.write(concat)
 
                 # prev = None
                 # tmp_map = {}

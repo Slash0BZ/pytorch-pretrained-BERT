@@ -1097,7 +1097,7 @@ class BertForTemporalClassification(BertPreTrainedModel):
         mu = nn.functional.sigmoid(self.mu_classifier(states)).view(-1, self.n_gussians)
         mu = mu * self.mu_weight.repeat(mu.size()[0], 1)
         mu = mu + self.mu_bias.repeat(mu.size()[0], 1)
-        sigma = torch.exp(self.sigma_classifier(states))
+        sigma = torch.mul(nn.functional.sigmoid(self.sigma_classifier(states)).view(-1, self.n_gussians), 0.5) * mu
 
         if labels is not None:
             """NOT IN USE"""

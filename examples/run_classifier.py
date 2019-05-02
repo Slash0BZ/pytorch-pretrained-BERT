@@ -51,7 +51,7 @@ logger = logging.getLogger(__name__)
 class InputExample(object):
     """A single training/test example for simple sequence classification."""
 
-    def __init__(self, guid, text_a, text_b=None, label=None, target_idx=0, tolerance=1, subj_mask=None, obj_mask=None):
+    def __init__(self, guid, text_a, text_b=None, label=None, target_idx=0, tolerance=1, subj_mask=None, obj_mask=None, adjustment=1.0):
         """Constructs a InputExample.
 
         Args:
@@ -71,12 +71,13 @@ class InputExample(object):
         self.tolerance = tolerance
         self.subj_mask = subj_mask
         self.obj_mask = obj_mask
+        self.adjustment = adjustment
 
 
 class InputFeatures(object):
     """A single set of features of data."""
 
-    def __init__(self, input_ids, input_mask, segment_ids, label_id, target_idx=0, tolerance=3, subj_mask=None, obj_mask=None):
+    def __init__(self, input_ids, input_mask, segment_ids, label_id, target_idx=0, tolerance=3, subj_mask=None, obj_mask=None, adjustment=1.0):
         self.input_ids = input_ids
         self.input_mask = input_mask
         self.segment_ids = segment_ids
@@ -85,6 +86,7 @@ class InputFeatures(object):
         self.tolerance = tolerance
         self.subj_mask = subj_mask
         self.obj_mask = obj_mask
+        self.adjustment = adjustment
 
 
 class DataProcessor(object):
@@ -318,6 +320,16 @@ class TemporalVerbProcessor(DataProcessor):
                 continue
             label_unit = label_raw.split(" ")[1].lower()
             label_idx = label_num * value_map[label_unit] / 290304000.0
+
+            label_seconds = label_num * value_map[label_unit]
+            if math.exp(5.0) > label_seconds:
+                adjustment = 0.91705
+            elif math.exp(10.0) > label_seconds:
+                adjustment = 0.34670
+            elif math.exp(15.0) > label_seconds:
+                adjustment = 0.17558
+            else:
+                adjustment = 0.08937
             # label_idx = label_num * value_map[label_unit] / 2592000.0
             # label_idx = math.log(label_num * value_map[label_unit]) / 22.0
             if label_idx > 1.0:
@@ -334,7 +346,8 @@ class TemporalVerbProcessor(DataProcessor):
 
             examples.append(
                 InputExample(
-                    guid=guid, text_a=text_a, label=label_idx, target_idx=target_idx, subj_mask=subj_mask, obj_mask=obj_mask
+                    guid=guid, text_a=text_a, label=label_idx, target_idx=target_idx, subj_mask=subj_mask, obj_mask=obj_mask,
+                    adjustment=adjustment
                 ))
         return examples
 
@@ -870,7 +883,8 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
                               target_idx=example.target_idx + 1,
                               tolerance=example.tolerance,
                               subj_mask=subj_mask,
-                              obj_mask=obj_mask))
+                              obj_mask=obj_mask,
+                              adjustment=example.adjustment))
     return features
 
 
@@ -1076,10 +1090,11 @@ def gaussian_distribution(y, mu, sigma):
     return torch.add((torch.exp(result) * torch.reciprocal(sigma)) * oneDivSqrtTwoPI, 1e-10)
 
 
-def mdn_loss_fn(pi, sigma, mu, y):
+def mdn_loss_fn(pi, sigma, mu, y, adjustments=None):
     result = gaussian_distribution(y, mu, sigma) * pi
-    result[torch.isinf(result)] = 1e-10
     result = torch.sum(result, dim=1)
+    if adjustments is not None:
+        result = result * adjustments
     result = -torch.log(result)
 
     m = torch.distributions.Normal(loc=mu, scale=sigma)
@@ -1359,6 +1374,7 @@ def main():
         all_target_idxs = torch.tensor([f.target_idx for f in train_features], dtype=torch.long)
         all_subj_masks = torch.tensor([f.subj_mask for f in train_features], dtype=torch.long)
         all_obj_masks = torch.tensor([f.obj_mask for f in train_features], dtype=torch.long)
+        all_adjustments = torch.tensor([f.adjustment for f in train_features], dtype=torch.float)
 
         if output_mode == "classification":
             all_label_ids = torch.tensor([f.label_id for f in train_features], dtype=torch.long)
@@ -1366,7 +1382,7 @@ def main():
             all_label_ids = torch.tensor([f.label_id for f in train_features], dtype=torch.float)
 
         train_data = TensorDataset(
-            all_input_ids, all_input_mask, all_segment_ids, all_label_ids, all_target_idxs, all_subj_masks, all_obj_masks
+            all_input_ids, all_input_mask, all_segment_ids, all_label_ids, all_target_idxs, all_subj_masks, all_obj_masks, all_adjustments
         )
         if args.local_rank == -1:
             train_sampler = RandomSampler(train_data)
@@ -1381,7 +1397,7 @@ def main():
             middle_loss = 0.0
             for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration")):
                 batch = tuple(t.to(device) for t in batch)
-                input_ids, input_mask, segment_ids, label_ids, target_idxs, subj_masks, obj_masks = batch
+                input_ids, input_mask, segment_ids, label_ids, target_idxs, subj_masks, obj_masks, adjustments = batch
 
                 # define a new function to compute loss values for both output_modes
                 pi, mu, sigma = model(input_ids, segment_ids, input_mask, labels=None, target_idx=target_idxs, subj_mask=subj_masks, obj_mask=obj_masks)
@@ -1390,7 +1406,7 @@ def main():
                     loss = None
                 elif output_mode == "regression":
                     label_ids = label_ids.unsqueeze(1)
-                    loss = mdn_loss_fn(pi, sigma, mu, label_ids)
+                    loss = mdn_loss_fn(pi, sigma, mu, label_ids, adjustments)
 
                 if n_gpu > 1:
                     loss = loss.mean() # mean() to average on multi-gpu.
@@ -1501,7 +1517,7 @@ def main():
                 day_cdf = torch.sum(m.cdf(day_val) * pi, dim=1).detach().cpu().numpy()
                 rest_cdf = torch.sum(m.cdf(1.0) * pi, dim=1).detach().cpu().numpy()
                 for i, v in enumerate(day_cdf):
-                    if v >= 0.26 * rest_cdf[i]:
+                    if v >= 0.24 * rest_cdf[i]:
                         preds.append(0)
                     else:
                         preds.append(1)
@@ -1527,7 +1543,7 @@ def main():
                 for i in range(0, 1000):
                     # val = float(math.exp(float(i))) / divident
                     # val = float(i) / 40.0 / 22.0
-                    val = float(i) * 290304.0 / divident
+                    val = float(i) * 3600.0 / divident
                     # val = math.log(val) / 22.0
                     cdf = torch.sum(m.cdf(val) * pi, dim=1).detach().cpu().numpy()
                     cdf_copy = torch.sum(m.cdf(val) * pi, dim=1).detach().cpu().numpy()

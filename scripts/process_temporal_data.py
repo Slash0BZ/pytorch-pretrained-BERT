@@ -1116,6 +1116,57 @@ class VerbBaseline:
             print(str(p) + ", " + str(r) + ", " + str(f))
             print()
 
+    def sampling_data(self):
+        import math
+        import random
+        lines = [x.strip() for x in open("samples/duration/verb_formatted_all_svo.txt").readlines()]
+        bucket_a = []
+        bucket_b = []
+        bucket_c = []
+        bucket_d = []
+        for line in lines:
+            timex = line.split("\t")[2]
+            seconds = self.get_seconds_from_timex(timex)
+            if math.exp(5.0) > seconds:
+                bucket_a.append(line)
+            elif math.exp(10.0) > seconds:
+                bucket_b.append(line)
+            elif math.exp(15.0) > seconds:
+                bucket_c.append(line)
+            elif 290304000.0 > seconds:
+                bucket_d.append(line)
+
+        len_a = float(len(bucket_a))
+        len_b = float(len(bucket_b))
+        len_c = float(len(bucket_c))
+        len_d = float(len(bucket_d))
+        total_len = len(bucket_a) + len(bucket_b) + len(bucket_c) + len(bucket_d)
+        total_len = float(total_len)
+
+        scores = np.array([total_len / len_a, total_len / len_b, total_len / len_c, total_len / len_d])
+        norm = scores / np.linalg.norm(scores)
+        print(norm)
+
+
+
+        # random.shuffle(bucket_a)
+        # random.shuffle(bucket_b)
+        # random.shuffle(bucket_c)
+        # random.shuffle(bucket_d)
+        #
+        # bucket_a = bucket_a[:50]
+        # bucket_b = bucket_b[:50]
+        # bucket_c = bucket_c[:50]
+        # bucket_d = bucket_d[:50]
+        #
+        # f_out = open("samples/duration/verb_bucket_samples.txt", "w")
+        # for line in bucket_a + bucket_b + bucket_c + bucket_d:
+        #     tokens = line.split("\t")[0].split()
+        #     verb_idx = int(line.split("\t")[1])
+        #     tokens[verb_idx] = "[" + tokens[verb_idx] + "]"
+        #     sent = " ".join(tokens)
+        #     f_out.write(sent + "\t" + line.split("\t")[2] + "\n")
+
 
 class VerbPhysicsEval:
 
@@ -1227,13 +1278,14 @@ if __name__ == "__main__":
     # VerbBaseline.merge_map("samples/duration/all/nearest_verb_all/partition_", "samples/duration/all/nearest_verb.pkl")
     # VerbBaseline.exp_output("samples/duration/all/nearest_verb.pkl", "work")
 
-    # baseline = VerbBaseline("")
+    baseline = VerbBaseline("")
+    baseline.sampling_data()
     # baseline.find_distribution()
     # baseline.test_file("samples/duration/all/nearest_verb.pkl", "samples/duration/timebank_formatted.txt")
 
-    verbphysics = VerbPhysicsEval()
+    # verbphysics = VerbPhysicsEval()
     # verbphysics.process_raw_file([
     #     "samples/verbphysics/train-5/train.csv",
     #     "samples/verbphysics/train-5/test.csv",
     #     "samples/verbphysics/train-5/dev.csv",], "samples/verbphysics/train-5/obj_file_15v.txt")
-    verbphysics.process_embedding_file("samples/verbphysics/train-5/obj_file_15v.txt", "result_logits.txt")
+    # verbphysics.process_embedding_file("samples/verbphysics/train-5/obj_file_15v.txt", "result_logits.txt")

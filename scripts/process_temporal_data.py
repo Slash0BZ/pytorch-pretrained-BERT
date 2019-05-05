@@ -675,24 +675,38 @@ class SRLRunner:
         lines = [x.strip() for x in open("samples/duration/duration_srl_fail.jsonl").readlines()]
         reader = jsonlines.Reader(lines)
 
-        f_out = open("samples/duration/verb_formatted_all_svo_from_fail.txt", "w")
+        # f_out = open("samples/duration/verb_formatted_all_svo_from_fail.txt", "w")
+        care_list = ['take', 'took', 'spend', 'spent']
         for obj in reader:
             tokens = obj["words"]
-            sentence = ' '.join(tokens)
-            if self.extractor.validate_sentence(sentence) and self.extractor.validate_argument(obj["ARGMTMP"]):
-                tags = obj["TAGS"]
-                verb_pos = self.get_verb_position(tags)
-                start, end = self.get_tmp_range(tags)
-                subj_start, subj_end = self.get_subj_position(tags)
-                obj_start, obj_end = self.get_obj_position(tags)
-                arg3_start, arg3_end = self.get_arg3position(tags)
-                if verb_pos == -1 or start == -1 or end == -1:
-                    continue
-                # for j in range(start, end):
-                    # tokens[j] = "[MASK]"
-                f_out.write(' '.join(tokens) + "\t" + str(verb_pos) + "\t" + obj["TMPVAL"] + "\t"
-                            + str(subj_start) + "\t" + str(subj_end) + "\t" + str(obj_start) + "\t" + str(obj_end) +
-                            "\t" + str(arg3_start) + "\t" + str(arg3_end) + "\n")
+            verbs = obj["verbs"]
+            chosen_range = [-1, -1]
+            for verb in verbs:
+                if verb['verb'].lower() in care_list:
+                    start, end = self.get_obj_position(verb['tags'])
+                    if start == -1:
+                        continue
+                    valid = False
+                    for i in range(start + 1, end):
+                        if (tokens[i].lower() in self.extractor.duration_keys) and (self.extractor.quantity(tokens[i - 1]) is not None):
+                            valid = True
+                            break
+                    if valid:
+                        v_start, v_end = self.get_subj_position(verb['tags'])
+                        if v_start == -1:
+                            continue
+                        if tokens[v_start].lower() != "to":
+                            continue
+                        chosen_range[0] = v_start + 1
+                        chosen_range[1] = v_start + 3
+            if chosen_range[0] > -1:
+                for verb in verbs:
+                    verb_pos = self.get_verb_position(verb['tags'])
+                    if chosen_range[1] > verb_pos >= chosen_range[0]:
+                        if "description" in verb:
+                            print(verb['description'])
+                        else:
+                            print(verb)
 
     def print_random_srl(self):
         # lines = [x.strip() for x in open("samples/duration/duration_srl_succeed.jsonl").readlines()]
@@ -1358,14 +1372,15 @@ if __name__ == "__main__":
     # runner.parse_srl_file("samples/duration_srl_verbs.476452.jsonl")
     # runner.parse_srl_file("samples/duration_srl_verbs_3.jsonl")
     # runner.parse_srl_file("samples/duration/verb_nyt_svo.jsonl")
-    runner.prepare_verb_file()
+    # runner.prepare_verb_file()
+    runner.prepare_verb_file_for_failures()
     # runner.print_random_srl_json()
     # runner.print_random_srl()
     # runner.prepare_nyt_srl_file()
     # runner.print_file("samples/duration/duration_srl_fail.jsonl")
 
-    extractor = GigawordExtractor()
-    extractor.get_rid_of_masks("samples/duration/verb_formatted_all_svo_better_filter_0.txt", "samples/duration/verb_formatted_all_svo_better_filter_0.txt")
+    # extractor = GigawordExtractor()
+    # extractor.get_rid_of_masks("samples/duration/verb_formatted_all_svo_better_filter_0.txt", "samples/duration/verb_formatted_all_svo_better_filter_0.txt")
 
     # baseline = VerbBaseline("samples/duration/all/verbs.txt")
     # baseline.process("samples/duration/all/nearest_verb_cont/partition_")

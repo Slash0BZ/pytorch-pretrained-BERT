@@ -333,8 +333,8 @@ class TemporalVerbProcessor(DataProcessor):
             #     adjustment = 0.17558
             # else:
             #     adjustment = 0.08937
-            # label_idx = label_num * value_map[label_unit] / 290304000.0
-            label_idx = math.log(label_num * value_map[label_unit]) / 22.0
+            label_idx = label_num * value_map[label_unit] / 290304000.0
+            # label_idx = math.log(label_num * value_map[label_unit]) / 22.0
             if label_idx > 1.0:
                 continue
             subj_mask = [0] * len(text_a.split())

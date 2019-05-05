@@ -1059,9 +1059,9 @@ class BertForTemporalClassification(BertPreTrainedModel):
 
         self.n_gussians = 4
 
-        self.pi_classifier = nn.Linear(config.hidden_size * 1, self.n_gussians)
-        self.mu_classifier = nn.Linear(config.hidden_size * 1, self.n_gussians)
-        self.sigma_classifier = nn.Linear(config.hidden_size * 1, self.n_gussians)
+        self.pi_classifier = nn.Linear(config.hidden_size * 2, self.n_gussians)
+        self.mu_classifier = nn.Linear(config.hidden_size * 2, self.n_gussians)
+        self.sigma_classifier = nn.Linear(config.hidden_size * 2, self.n_gussians)
 
         self.main_range = 290304000.0
         self.mu_weight = torch.tensor([
@@ -1094,9 +1094,11 @@ class BertForTemporalClassification(BertPreTrainedModel):
         # all_output = self.all_attention(sequence_output, attention_mask)
         # target_all_output = all_output.gather(1, target_idx.view(-1, 1).unsqueeze(2).repeat(1, 1, all_output.size(2)))
 
+        states = torch.cat((target_subj_output, target_obj_output), 2)
         # states = torch.cat((target_subj_output, target_obj_output, target_arg3_output), 2)
-        states = target_subj_output + target_obj_output + target_arg3_output
-        states = self.LayerNorm(states)
+        # states = torch.cat((target_subj_output, target_obj_output, target_arg3_output), 2)
+        # states = target_subj_output + target_obj_output + target_arg3_output
+        # states = self.LayerNorm(states)
         states = self.dropout(states)
 
         pi = nn.functional.softmax(self.pi_classifier(states), -1)

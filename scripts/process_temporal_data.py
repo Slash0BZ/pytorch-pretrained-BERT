@@ -144,6 +144,33 @@ class GigawordExtractor:
                         except Exception as e:
                             print(e)
 
+    def validate_argument(self, argtmp_tokens):
+        filter_list = [
+            "after",
+            "before",
+            "ago",
+            "earlier",
+            "first",
+        ]
+
+        first_list = [
+            "with",
+            "at",
+        ]
+
+        equal_list = [
+            "one day",
+        ]
+
+        for t in argtmp_tokens:
+            if t in filter_list:
+                return False
+        if " ".join(argtmp_tokens).lower() in equal_list:
+            return False
+        if argtmp_tokens[0].lower() in first_list:
+            return False
+        return True
+
     def validate_sentence(self, sentence):
         invalid_next_tokens = [
             "ago",
@@ -163,6 +190,7 @@ class GigawordExtractor:
         invalid_prev_tokens = [
             "after",
             "within",
+            "every",
 
         ]
         invalid_prev_5_tokens = [
@@ -430,6 +458,8 @@ class GigawordExtractor:
             subj_end = int(line.split("\t")[4])
             obj_start = int(line.split("\t")[5])
             obj_end = int(line.split("\t")[6])
+            arg2_start = int(line.split("\t")[7])
+            arg2_end = int(line.split("\t")[8])
 
             if subj_start >= mask_end:
                 subj_start -= mask_end - mask_start
@@ -437,6 +467,9 @@ class GigawordExtractor:
             if obj_start >= mask_end:
                 obj_start -= mask_end - mask_start
                 obj_end -= mask_end - mask_start
+            if arg2_start >= mask_end:
+                arg2_start -= mask_end - mask_start
+                arg2_end -= mask_end - mask_start
 
             label = line.split("\t")[2]
             label_num = float(label.split()[0])
@@ -461,7 +494,8 @@ class GigawordExtractor:
                 if t != "":
                     new_tokens.append(t)
             f_out.write(" ".join(new_tokens) + "\t" + str(target_idx) + "\t" + label + "\t" +
-                        str(subj_start) + "\t" + str(subj_end) + "\t" + str(obj_start) + "\t" + str(obj_end) + "\n")
+                        str(subj_start) + "\t" + str(subj_end) + "\t" + str(obj_start) + "\t" + str(obj_end) +
+                        "\t" + str(arg2_start) + "\t" + str(arg2_end) + "\n")
 
 
 # class PretrainedModel:
@@ -549,6 +583,17 @@ class SRLRunner:
                 end += 1
         return start, end
 
+    def get_arg3_position(self, tags):
+        start = -1
+        end = -1
+        for i, t in enumerate(tags):
+            if t == "B-ARG2":
+                start = i
+                end = i + 1
+            if t == "I-ARG2":
+                end += 1
+        return start, end
+
     def get_tmp_range(self, tags):
         start = -1
         end = -1
@@ -607,22 +652,69 @@ class SRLRunner:
         lines = [x.strip() for x in open("samples/duration/duration_srl_succeed.jsonl").readlines()]
         reader = jsonlines.Reader(lines)
 
-        f_out = open("samples/duration/verb_formatted_all_svo.txt", "w")
+        f_out = open("samples/duration/verb_formatted_all_svo_better_filter_0.txt", "w")
         for obj in reader:
             tokens = obj["TOKENS"]
             sentence = ' '.join(tokens)
-            if self.extractor.validate_sentence(sentence):
+            if self.extractor.validate_sentence(sentence) and self.extractor.validate_argument(obj["ARGMTMP"]):
                 tags = obj["TAGS"]
                 verb_pos = self.get_verb_position(tags)
                 start, end = self.get_tmp_range(tags)
                 subj_start, subj_end = self.get_subj_position(tags)
                 obj_start, obj_end = self.get_obj_position(tags)
+                arg3_start, arg3_end = self.get_arg3_position(tags)
                 if verb_pos == -1 or start == -1 or end == -1:
                     continue
                 for j in range(start, end):
                     tokens[j] = "[MASK]"
                 f_out.write(' '.join(tokens) + "\t" + str(verb_pos) + "\t" + obj["TMPVAL"] + "\t"
-                            + str(subj_start) + "\t" + str(subj_end) + "\t" + str(obj_start) + "\t" + str(obj_end) + "\n")
+                            + str(subj_start) + "\t" + str(subj_end) + "\t" + str(obj_start) + "\t" + str(obj_end) +
+                            "\t" + str(arg3_start) + "\t" + str(arg3_end) + "\n")
+
+    def prepare_verb_file_for_failures(self):
+        lines = [x.strip() for x in open("samples/duration/duration_srl_fail.jsonl").readlines()]
+        reader = jsonlines.Reader(lines)
+
+        f_out = open("samples/duration/verb_formatted_all_svo_from_fail.txt", "w")
+        for obj in reader:
+            tokens = obj["words"]
+            sentence = ' '.join(tokens)
+            if self.extractor.validate_sentence(sentence) and self.extractor.validate_argument(obj["ARGMTMP"]):
+                tags = obj["TAGS"]
+                verb_pos = self.get_verb_position(tags)
+                start, end = self.get_tmp_range(tags)
+                subj_start, subj_end = self.get_subj_position(tags)
+                obj_start, obj_end = self.get_obj_position(tags)
+                arg3_start, arg3_end = self.get_arg3position(tags)
+                if verb_pos == -1 or start == -1 or end == -1:
+                    continue
+                # for j in range(start, end):
+                    # tokens[j] = "[MASK]"
+                f_out.write(' '.join(tokens) + "\t" + str(verb_pos) + "\t" + obj["TMPVAL"] + "\t"
+                            + str(subj_start) + "\t" + str(subj_end) + "\t" + str(obj_start) + "\t" + str(obj_end) +
+                            "\t" + str(arg3_start) + "\t" + str(arg3_end) + "\n")
+
+    def print_random_srl(self):
+        # lines = [x.strip() for x in open("samples/duration/duration_srl_succeed.jsonl").readlines()]
+        lines = [x.strip() for x in open("samples/duration/verb_formatted_all_svo_better_filter_0.txt").readlines()]
+        random.shuffle(lines)
+        printed = 0
+        for line in lines:
+            print(line)
+            printed += 1
+            if printed > 100:
+                break
+
+    def print_random_srl_json(self):
+        lines = [x.strip() for x in open("samples/duration/duration_srl_fail.jsonl").readlines()]
+        random.shuffle(lines)
+        reader = jsonlines.Reader(lines)
+        printed = 0
+        for obj in reader:
+            print(" ".join(obj["words"]))
+            printed += 1
+            if printed > 100:
+                break
 
     def prepare_nyt_srl_file(self):
         main_dir = "/Users/xuanyuzhou/Downloads/nyt-srl"
@@ -1259,27 +1351,29 @@ if __name__ == "__main__":
     # srl = AllenSRL()
     # srl.predict_file("samples/duration_afp_eng_filtered.txt")
 
-    # runner = SRLRunner()
+    runner = SRLRunner()
     # runner.count_label("samples/duration/verb_formatted_all_svo.txt")
     # runner.prepare_timebank_srl()
     # runner.prepare_timebank_file()
     # runner.parse_srl_file("samples/duration_srl_verbs.476452.jsonl")
     # runner.parse_srl_file("samples/duration_srl_verbs_3.jsonl")
     # runner.parse_srl_file("samples/duration/verb_nyt_svo.jsonl")
-    # runner.prepare_verb_file()
+    runner.prepare_verb_file()
+    # runner.print_random_srl_json()
+    # runner.print_random_srl()
     # runner.prepare_nyt_srl_file()
     # runner.print_file("samples/duration/duration_srl_fail.jsonl")
 
-    # extractor = GigawordExtractor()
-    # extractor.get_rid_of_masks("samples/duration/verb_formatted_all_svo.txt", "samples/duration/verb_formatted_all_svo.txt")
+    extractor = GigawordExtractor()
+    extractor.get_rid_of_masks("samples/duration/verb_formatted_all_svo_better_filter_0.txt", "samples/duration/verb_formatted_all_svo_better_filter_0.txt")
 
     # baseline = VerbBaseline("samples/duration/all/verbs.txt")
     # baseline.process("samples/duration/all/nearest_verb_cont/partition_")
     # VerbBaseline.merge_map("samples/duration/all/nearest_verb_all/partition_", "samples/duration/all/nearest_verb.pkl")
     # VerbBaseline.exp_output("samples/duration/all/nearest_verb.pkl", "work")
 
-    baseline = VerbBaseline("")
-    baseline.sampling_data()
+    # baseline = VerbBaseline("")
+    # baseline.sampling_data()
     # baseline.find_distribution()
     # baseline.test_file("samples/duration/all/nearest_verb.pkl", "samples/duration/timebank_formatted.txt")
 

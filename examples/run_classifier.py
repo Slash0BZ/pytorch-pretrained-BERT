@@ -326,13 +326,13 @@ class TemporalVerbProcessor(DataProcessor):
             adjustment = 1.0
             # label_seconds = label_num * value_map[label_unit]
             # if math.exp(5.0) > label_seconds:
-            #     adjustment = 0.91705
+            #     adjustment = 0.9529
             # elif math.exp(10.0) > label_seconds:
-            #     adjustment = 0.34670
+            #     adjustment = 0.2622
             # elif math.exp(15.0) > label_seconds:
-            #     adjustment = 0.17558
+            #     adjustment = 0.1406
             # else:
-            #     adjustment = 0.08937
+            #     adjustment = 0.0594
             label_idx = label_num * value_map[label_unit] / 290304000.0
             # label_idx = math.log(label_num * value_map[label_unit]) / 22.0
             if label_idx > 1.0:
@@ -857,7 +857,10 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
         segment_ids += padding
         subj_mask = [0] + subj_mask + [0] + padding
         obj_mask = [0] + obj_mask + [0] + padding
-        arg3_mask = [0] + arg3_mask + [0] + padding
+        if arg3_mask is not None:
+            arg3_mask = [0] + arg3_mask + [0] + padding
+        else:
+            arg3_mask = [0] * max_seq_length
 
         assert len(input_ids) == max_seq_length
         assert len(input_mask) == max_seq_length
@@ -1433,6 +1436,8 @@ def main():
                 else:
                     loss.backward()
 
+                # torch.nn.utils.clip_grad_norm_(model.parameters(), 0.25)
+
                 tr_loss += loss.item()
                 middle_loss += loss.item()
                 if step % 100 == 0:
@@ -1441,10 +1446,13 @@ def main():
                 nb_tr_examples += input_ids.size(0)
                 nb_tr_steps += 1
                 if step % 1000 == 0:
+                    actual_dir = args.output_dir + "_epoch_" + str(_)
+                    if not os.path.exists(actual_dir):
+                        os.makedirs(actual_dir)
                     model_to_save = model.module if hasattr(model, 'module') else model  # Only save the model it-self
-                    output_model_file = os.path.join(args.output_dir, WEIGHTS_NAME)
+                    output_model_file = os.path.join(actual_dir, WEIGHTS_NAME)
                     torch.save(model_to_save.state_dict(), output_model_file)
-                    output_config_file = os.path.join(args.output_dir, CONFIG_NAME)
+                    output_config_file = os.path.join(actual_dir, CONFIG_NAME)
                     with open(output_config_file, 'w') as f:
                         f.write(model_to_save.config.to_json_string())
 
@@ -1526,13 +1534,14 @@ def main():
             elif output_mode == "regression":
                 m = torch.distributions.Normal(loc=mu, scale=sigma)
                 divident = 290304000.0
-                # divident = 1451520000.0
-                # divident = 2592000.0
                 day_val = 24.0 * 3600.0 / divident
+                # day_val = math.log(24.0 * 3600) / 22.0
                 day_cdf = torch.sum(m.cdf(day_val) * pi, dim=1).detach().cpu().numpy()
                 rest_cdf = torch.sum(m.cdf(1.0) * pi, dim=1).detach().cpu().numpy()
                 for i, v in enumerate(day_cdf):
-                    if v >= 0.4 * rest_cdf[i]:
+                    print(v)
+                    print(rest_cdf[i])
+                    if v >= 0.1 * rest_cdf[i]:
                         preds.append(0)
                     else:
                         preds.append(1)
@@ -1558,9 +1567,9 @@ def main():
                 for i in range(1, 101):
                     # val = float(math.exp(float(i))) / divident
                     # val = float(i) / 40.0 / 22.0
-                    # val = float(i) * 3600.0 / divident
+                    val = float(i) * 3600.0 / divident
                     # val = math.log(val) / 22.0
-                    val = math.log(float(i) * 3600) / 22.0
+                    # val = math.log(float(i) * 3600) / 22.0
                     cdf = torch.sum(m.cdf(val) * pi, dim=1).detach().cpu().numpy()
                     cdf_copy = torch.sum(m.cdf(val) * pi, dim=1).detach().cpu().numpy()
                     if prev is not None:

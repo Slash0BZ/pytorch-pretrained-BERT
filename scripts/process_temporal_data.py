@@ -151,11 +151,27 @@ class GigawordExtractor:
             "ago",
             "earlier",
             "first",
+            "during",
+            "times",
+            "within",
+            "once",
+            "twice",
+            "early",
+            "later",
+            "late",
+        ]
+
+        filter_phrase_list = [
+            "ahead of",
+            "in a row",
+            "prior to",
+            "about the"
         ]
 
         first_list = [
             "with",
             "at",
+            "when",
         ]
 
         equal_list = [
@@ -163,11 +179,27 @@ class GigawordExtractor:
         ]
 
         for t in argtmp_tokens:
-            if t in filter_list:
+            if t.lower() in filter_list:
                 return False
         if " ".join(argtmp_tokens).lower() in equal_list:
             return False
         if argtmp_tokens[0].lower() in first_list:
+            return False
+        concat = " ".join(argtmp_tokens).lower()
+        for phrase in filter_phrase_list:
+            if phrase in concat:
+                return False
+        quantity_count = 0
+        for t in argtmp_tokens:
+            if GigawordExtractor.quantity(t.lower()) is not None:
+                quantity_count += 1
+        if quantity_count > 1:
+            return False
+        duration_key_count = 0
+        for t in argtmp_tokens:
+            if t.lower() in self.duration_keys:
+                duration_key_count += 1
+        if duration_key_count > 1:
             return False
         return True
 
@@ -652,7 +684,7 @@ class SRLRunner:
         lines = [x.strip() for x in open("samples/duration/duration_srl_succeed.jsonl").readlines()]
         reader = jsonlines.Reader(lines)
 
-        f_out = open("samples/duration/verb_formatted_all_svo_better_filter_0.txt", "w")
+        f_out = open("samples/duration/verb_formatted_all_svo_better_filter_3.txt", "w")
         for obj in reader:
             tokens = obj["TOKENS"]
             sentence = ' '.join(tokens)
@@ -670,6 +702,13 @@ class SRLRunner:
                 f_out.write(' '.join(tokens) + "\t" + str(verb_pos) + "\t" + obj["TMPVAL"] + "\t"
                             + str(subj_start) + "\t" + str(subj_end) + "\t" + str(obj_start) + "\t" + str(obj_end) +
                             "\t" + str(arg3_start) + "\t" + str(arg3_end) + "\n")
+
+    def filter_short_verbs(self, path, out_path):
+        lines = [x.strip() for x in open(path).readlines()]
+        f_out = open(out_path, "w")
+
+        # for line in lines:
+
 
     def prepare_verb_file_for_failures(self):
         lines = [x.strip() for x in open("samples/duration/duration_srl_fail.jsonl").readlines()]
@@ -949,6 +988,81 @@ class SRLRunner:
                 f_out.write(" ".join(tokens) + "\t" + str(target_idx) + "\t" + line.split("\t")[2] + "\t" + line.split("\t")[3] + "\t" +
                             str(-1) + "\t" + str(-1) + "\t" + str(-1) + "\t" + str(-1) + "\n")
 
+    def filter_only_verb_timebank(self):
+        source_lines = [x.strip() for x in open("samples/duration/timebank_svo.txt").readlines()]
+        f_out = open("samples/duration/timebank_svo_verbonly_strict.txt", "w")
+        for line in source_lines:
+            tokens = line.split("\t")[0].split()
+            ta = self.extractor.pipeline.doc([tokens], pretokenized=True)
+            verb_pos = int(line.split("\t")[1])
+            # if ta.get_pos[verb_pos]['label'][0] == "V" and int(line.split("\t")[4]) > -1 and int(line.split("\t")[6]) > -1:
+            if ta.get_pos[verb_pos]['label'][0] == "V":
+                f_out.write(line + "\n")
+            else:
+                tokens[verb_pos] = "[" + tokens[verb_pos] + "]"
+                print(" ".join(tokens))
+
+
+
+    def remove_dups(self, input_file, output_file):
+        source_lines = [x.strip() for x in open(input_file).readlines()]
+        f_out = open(output_file, "w")
+        s = set()
+        for line in source_lines:
+            if line not in s:
+                s.add(line)
+                f_out.write(line + "\n")
+
+    def eval_temporal(self):
+        lines = [x.strip() for x in open("samples/tempeval/base-segmentation.tab").readlines()]
+        sentences = []
+        doc_ids = []
+        sent_ids = []
+        cur_doc_id = ""
+        cur_sent_id = ""
+        cur_tokens = []
+        for line in lines:
+            group = line.split("\t")
+            doc_id = group[0]
+            sent_id = int(group[1])
+            token = group[3]
+            if cur_sent_id != "" and sent_id != cur_sent_id:
+                sentences.append(cur_tokens)
+                doc_ids.append(cur_doc_id)
+                sent_ids.append(cur_sent_id)
+                cur_tokens = []
+            cur_sent_id = sent_id
+            cur_doc_id = doc_id
+            cur_tokens.append(token)
+
+        predictions = []
+        for i, tokens in enumerate(sentences):
+            for j, t in enumerate(tokens[1:]):
+                if t in self.extractor.duration_keys and self.extractor.quantity(tokens[j - 1]) is not None and self.extractor.validate_sentence(" ".join(tokens)):
+                    predictions.append([doc_ids[i], sent_ids[i], j - 2])
+
+        gold_lines = [x.strip() for x in open("samples/tempeval/timex-attributes.tab").readlines()]
+        answers = []
+        for line in gold_lines:
+            group = line.split("\t")
+            if group[7] == "DURATION":
+                answers.append([group[0], int(group[1]), int(group[2])])
+
+        correct = 0.0
+        print(answers)
+        for p in predictions:
+            found = False
+            for a in answers:
+                if a[0] == p[0] and a[1] == p[1] and a[2] + 2 >= p[2] >= a[2] - 2:
+                    found = True
+                    correct += 1.0
+                    break
+            if not found:
+                print(p)
+
+        print(len(predictions))
+        print("Precision: " + str(correct / float(len(predictions))))
+        print("Recall: " + str(correct / float(len(answers))))
 
 
 class VerbBaseline:
@@ -1106,7 +1220,7 @@ class VerbBaseline:
             return 1
 
     def find_distribution(self):
-        with open("samples/duration/verb_formatted_all_svo.txt") as f_in:
+        with open("samples/duration/verb_formatted_all_svo_better_filter_non_mask.txt") as f_in:
             lines = [x.strip() for x in f_in.readlines()]
 
         result_map = {}
@@ -1222,10 +1336,139 @@ class VerbBaseline:
             print(str(p) + ", " + str(r) + ", " + str(f))
             print()
 
+    def print_errors(self):
+        import math
+        data_lines = [x.strip() for x in open("samples/duration/timebank_svo_verbonly.txt").readlines()]
+        prediction_lines = [x.strip() for x in open("results.txt").readlines()]
+        f_out = open("tmp_output.txt", "w")
+        verb_freq = {}
+        correct = 0.0
+        all_preds = []
+        all_labels = []
+        for i, line in enumerate(data_lines):
+            groups = line.split("\t")
+            lower_val = self.get_seconds(groups[2])
+            upper_val = self.get_seconds(groups[3])
+            lower_e = math.log(lower_val)
+            upper_e = math.log(upper_val)
+
+            if (lower_e + upper_e) / 2.0 >= 11.3666:
+                true_label = "long"
+            else:
+                true_label = "short"
+            all_labels.append(true_label)
+
+            prediction = prediction_lines[i]
+            if prediction[:3] == "1.0":
+                predicted_label = "short"
+            else:
+                predicted_label = "long"
+
+            tokens = groups[0].split()
+            doc = self.pipeline.doc([tokens], pretokenized=True)
+            v = list(doc.get_lemma)[int(groups[1])]["label"].lower()
+            if v == "say":
+                predicted_label = "short"
+            if v == "talk":
+                predicted_label = "short"
+            if v == "announce":
+                predicted_label = "short"
+            if v == "think":
+                predicted_label = "long"
+            if v == "believe":
+                predicted_label = "long"
+            if v == "touch":
+                predicted_label = "short"
+            if v == "kill":
+                predicted_label = "short"
+            all_preds.append(predicted_label)
+            tokens[int(groups[1])] = "[" + tokens[int(groups[1])] + "]"
+            # if v not in verb_freq:
+            #     verb_freq[v] = 0
+            # verb_freq[v] += 1
+
+            if true_label != predicted_label:
+                f_out.write(" ".join(tokens) + "\t" + true_label + "\t" + predicted_label + "\t" + groups[2] + "\t" + groups[3] + "\n")
+                if v not in verb_freq:
+                    verb_freq[v] = 0
+                verb_freq[v] += 1
+            else:
+                correct += 1.0
+        for f in sorted(verb_freq.items(), key=lambda kv: (kv[1], kv[0]), reverse=True):
+            print(f)
+        print(correct)
+
+        assert len(all_preds) == len(all_labels)
+        correct = 0.0
+        s_labeled = 0.0
+        s_predicted = 0.0
+        s_correct = 0.0
+        l_labeled = 0.0
+        l_predicted = 0.0
+        l_correct = 0.0
+        for i, p in enumerate(all_preds):
+            if all_labels[i] == p:
+                correct += 1.0
+                if p == "short":
+                    s_correct += 1.0
+                else:
+                    l_correct += 1.0
+        for p in all_preds:
+            if p == "long":
+                l_predicted += 1.0
+            else:
+                s_predicted += 1.0
+        for l in all_labels:
+            if l == "long":
+                l_labeled += 1.0
+            else:
+                s_labeled += 1.0
+
+        print("Acc.: " + str(correct / float(len(all_preds))))
+        print("Less than a day: " + str(s_correct / s_predicted) + ", " + str(s_correct / s_labeled))
+        print("Longer than a day: " + str(l_correct / l_predicted) + ", " + str(l_correct / l_labeled))
+
+    def print_verb_distribution(self):
+        data_lines = [x.strip() for x in open("samples/duration/verb_formatted_all_svo_better_filter_non_mask.txt").readlines()]
+        random.shuffle(data_lines)
+        data_lines = data_lines[:100000]
+        data_points = []
+        bin_1 = 0
+        bin_2 = 0
+        bin_3 = 0
+        bin_4 = 0
+        for i, line in enumerate(data_lines):
+            groups = line.split("\t")
+            tokens = groups[0].split()
+            v = tokens[int(groups[1])]
+            # if v == "say" or v == "said" or v == "saying":
+            # if v == "call" or v == "calling" or v == "called":
+            # if v == "see" or v == "seeing" or v == "saw":
+            if True:
+                val = self.get_seconds_from_timex(groups[2]) / 3600.0
+                if val < 100.0:
+                    bin_1 += 1
+                elif val < 200.0:
+                    bin_2 += 1
+                elif val < 300.0:
+                    bin_3 += 1
+                else:
+                    bin_4 += 1
+            # doc = self.pipeline.doc([tokens], pretokenized=True)
+            # v = list(doc.get_lemma)[int(groups[1])]["label"].lower()
+            # if v == "say":
+                data_points.append(self.get_seconds_from_timex(groups[2]) / 3600.0)
+        print(bin_1 / float(len(data_points)))
+        print(bin_2 / float(len(data_points)))
+        print(bin_3 / float(len(data_points)))
+        print(bin_4 / float(len(data_points)))
+        plt.hist(np.array(data_points), bins=range(0, 500, 10))
+        plt.show()
+
     def sampling_data(self):
         import math
         import random
-        lines = [x.strip() for x in open("samples/duration/verb_formatted_all_svo.txt").readlines()]
+        lines = [x.strip() for x in open("samples/duration/verb_formatted_all_svo_better_filter_3.txt").readlines()]
         bucket_a = []
         bucket_b = []
         bucket_c = []
@@ -1366,6 +1609,8 @@ if __name__ == "__main__":
     # srl.predict_file("samples/duration_afp_eng_filtered.txt")
 
     runner = SRLRunner()
+    # runner.eval_temporal()
+    runner.filter_only_verb_timebank()
     # runner.count_label("samples/duration/verb_formatted_all_svo.txt")
     # runner.prepare_timebank_srl()
     # runner.prepare_timebank_file()
@@ -1373,14 +1618,15 @@ if __name__ == "__main__":
     # runner.parse_srl_file("samples/duration_srl_verbs_3.jsonl")
     # runner.parse_srl_file("samples/duration/verb_nyt_svo.jsonl")
     # runner.prepare_verb_file()
-    runner.prepare_verb_file_for_failures()
+    # runner.remove_dups("samples/duration/verb_formatted_all_svo_better_filter_3.txt", "samples/duration/verb_formatted_all_svo_better_filter_3.txt")
+    # runner.prepare_verb_file_for_failures()
     # runner.print_random_srl_json()
     # runner.print_random_srl()
     # runner.prepare_nyt_srl_file()
     # runner.print_file("samples/duration/duration_srl_fail.jsonl")
 
     # extractor = GigawordExtractor()
-    # extractor.get_rid_of_masks("samples/duration/verb_formatted_all_svo_better_filter_0.txt", "samples/duration/verb_formatted_all_svo_better_filter_0.txt")
+    # extractor.get_rid_of_masks("samples/duration/verb_formatted_all_svo_better_filter_3.txt", "samples/duration/verb_formatted_all_svo_better_filter_3.txt")
 
     # baseline = VerbBaseline("samples/duration/all/verbs.txt")
     # baseline.process("samples/duration/all/nearest_verb_cont/partition_")
@@ -1388,6 +1634,8 @@ if __name__ == "__main__":
     # VerbBaseline.exp_output("samples/duration/all/nearest_verb.pkl", "work")
 
     # baseline = VerbBaseline("")
+    # baseline.print_errors()
+    # baseline.print_verb_distribution()
     # baseline.sampling_data()
     # baseline.find_distribution()
     # baseline.test_file("samples/duration/all/nearest_verb.pkl", "samples/duration/timebank_formatted.txt")

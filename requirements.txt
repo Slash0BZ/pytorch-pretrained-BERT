@@ -10,3 +10,9 @@ requests
 regex
 gensim
 numpy
+allennlp
+scikit-learn
+word2number
+jsonlines
+cython
+ccg_nlpy

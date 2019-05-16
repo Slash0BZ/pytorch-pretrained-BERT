@@ -12,6 +12,7 @@ from torch.nn import CrossEntropyLoss
 import torch.nn.functional as F
 import numpy as np
 import gensim
+import os
 
 
 class LayerNorm(nn.Module):
@@ -74,6 +75,15 @@ class VerbPhysicsClassification(nn.Module):
             return logits
 
 
+class FakeGlove:
+
+    def __init__(self, m):
+        self.vocab = m
+
+    def get_vector(self, s):
+        return self.vocab[s]
+
+
 class Runner:
 
     class Instance:
@@ -93,15 +103,20 @@ class Runner:
 
     def __init__(self, train_data, dev_data, test_data, embedding_file):
         self.num_label = 3
-        self.input_size = 1500
+        self.input_size = 100
         self.glove_size = 100
 
+        # if os.path.isfile("./glove_cache.pkl"):
+        #     self.glove_model = FakeGlove(pickle.load(open("./glove_cache.pkl", "rb")))
+        # else:
         self.glove_model = gensim.models.KeyedVectors.load_word2vec_format("data/glove_model.txt", binary=False)
         self.embedding = pickle.load(open(embedding_file, "rb"))
-        # self.embedding = None
+        self.cache_glove_map = {}
         self.train_data = self.load_data_file(train_data)
         self.dev_data = self.load_data_file(dev_data)
         self.test_data = self.load_data_file(test_data)
+        with open("./glove_cache.pkl", "wb") as f:
+            pickle.dump(self.cache_glove_map, f)
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = VerbPhysicsClassification(self.num_label, self.input_size, self.glove_size).to(self.device)
@@ -112,14 +127,19 @@ class Runner:
             a[i] = a[i] - b[i]
         return a
 
+    def adjust_learning_rate(self, optimizer, epoch, orig_lr):
+        lr = orig_lr * (0.1 ** (epoch // 200))
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = lr
+
     def load_data_file(self, file_name):
         instances = []
         for line in [x.strip() for x in open(file_name).readlines()]:
             if line[0] == ",":
                 continue
             group = line.split(",")
-            obj_1 = group[1]
-            obj_2 = group[2]
+            obj_1 = group[0]
+            obj_2 = group[1]
 
             label_map = {
                 "1": 0,
@@ -131,22 +151,22 @@ class Runner:
             glove_1 = [0] * self.glove_size
             glove_2 = [0] * self.glove_size
 
-            # if obj_1 in self.glove_model.vocab:
-            #     glove_1 = list(self.glove_model.get_vector(obj_1))
-            # if obj_2 in self.glove_model.vocab:
-            #     glove_2 = list(self.glove_model.get_vector(obj_2))
+            if obj_1 in self.glove_model.vocab:
+                glove_1 = list(self.glove_model.get_vector(obj_1))
+                self.cache_glove_map[obj_1] = glove_1
+            if obj_2 in self.glove_model.vocab:
+                glove_2 = list(self.glove_model.get_vector(obj_2))
+                self.cache_glove_map[obj_2] = glove_2
 
-            # # Adding size
             instance = self.Instance(
                 self.embedding[obj_1], self.embedding[obj_2],
-                # [0] * 1500, [0] * 1500,
+                # [0] * 100 + glove_1, [0] * 100 + glove_2,
                 glove_1, glove_2,
-                label_map[group[4]], self.num_label, self.input_size, int(group[3]),
-                # list(self.glove_model.get_vector("size")),
+                label_map[group[3]], self.num_label, self.input_size, 3,
                 list([0] * 100),
                 dimension_name="size"
             )
-            if instance.label != 3:
+            if instance.label != 3 and group[2] == "mass":
                 instances.append(instance)
 
             # Adding weight
@@ -158,6 +178,42 @@ class Runner:
             #     # list(self.glove_model.get_vector("weight")),
             #     list([1] * 100),
             #     dimension_name="weight"
+            # )
+            # if instance.label != 3:
+            #     instances.append(instance)
+
+            # instance = self.Instance(
+            #     self.embedding[obj_1], self.embedding[obj_2],
+            #     # [0] * 150, [0] * 150,
+            #     glove_1, glove_2,
+            #     label_map[group[8]], self.num_label, self.input_size, int(group[7]),
+            #     # list(self.glove_model.get_vector("weight")),
+            #     list([1] * 100),
+            #     dimension_name="strength"
+            # )
+            # if instance.label != 3:
+            #     instances.append(instance)
+
+            # instance = self.Instance(
+            #     self.embedding[obj_1], self.embedding[obj_2],
+            #     # [0] * 1500, [0] * 1500,
+            #     glove_1, glove_2,
+            #     label_map[group[10]], self.num_label, self.input_size, int(group[9]),
+            #     # list(self.glove_model.get_vector("weight")),
+            #     list([1] * 100),
+            #     dimension_name="rigid"
+            # )
+            # if instance.label != 3:
+            #     instances.append(instance)
+
+            # instance = self.Instance(
+            #     self.embedding[obj_1], self.embedding[obj_2],
+            #     # [0] * 150, [0] * 150,
+            #     glove_1, glove_2,
+            #     label_map[group[12]], self.num_label, self.input_size, int(group[11]),
+            #     # list(self.glove_model.get_vector("weight")),
+            #     list([1] * 100),
+            #     dimension_name="rigid"
             # )
             # if instance.label != 3:
             #     instances.append(instance)
@@ -212,8 +268,7 @@ class Runner:
 
                 global_step += 1
 
-                # for param_group in optimizer.param_groups:
-                #     param_group['lr'] = learning_rate * self.warmup_linear(global_step / (epoch * len(data) / batch_size))
+                # self.adjust_learning_rate(optimizer, _, learning_rate)
             tmp_loss += epoch_loss
             if _ % 10 == 0:
                 for param_group in optimizer.param_groups:
@@ -269,16 +324,19 @@ class Runner:
 
         print("Acc.: " + str(correct / float(len(all_preds))))
         # print("Size Acc.: " + str(size_correct / float(all_test_dim_names.count("size"))))
-        print("Weight Acc.: " + str(weight_correct / float(all_test_dim_names.count("weight"))))
+        # print("Weight Acc.: " + str(weight_correct / float(all_test_dim_names.count("weight"))))
 
 
 if __name__ == "__main__":
     runner = Runner(
-        train_data="samples/verbphysics/train-20/train.csv",
-        dev_data="samples/verbphysics/train-20/dev.csv",
-        test_data="samples/verbphysics/train-20/test.csv",
-        embedding_file="samples/verbphysics/train-5/obj_embedding_15v_1h.pkl"
+        # train_data="samples/verbphysics/train-5/train.csv",
+        # dev_data="samples/verbphysics/train-5/dev.csv",
+        # test_data="samples/verbphysics/train-5/test.csv",
+        train_data="samples/vp_clean/reannotations/vp_reannotate_train.csv",
+        dev_data="samples/vp_clean/reannotations/vp_reannotate_dev.csv",
+        test_data="samples/vp_clean/reannotations/vp_reannotate_test.csv",
+        embedding_file="samples/verbphysics/train-5/obj_embedding_100v_mean.pkl"
     )
-    runner.train(epoch=600, batch_size=16)
+    runner.train(epoch=2000, batch_size=16)
     runner.eval(runner.dev_data)
     runner.eval(runner.test_data)

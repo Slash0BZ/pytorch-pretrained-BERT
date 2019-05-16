@@ -10,9 +10,9 @@ from ccg_nlpy import local_pipeline
 from math import floor
 from scipy.stats import norm
 import matplotlib.pyplot as plt
-# from allennlp import predictors
-# from allennlp.predictors import Predictor
-# from allennlp.models.archival import load_archive
+from allennlp import predictors
+from allennlp.predictors import Predictor
+from allennlp.models.archival import load_archive
 
 
 class GigawordDocument:
@@ -486,12 +486,20 @@ class GigawordExtractor:
             if target_idx >= mask_end:
                 target_idx -= mask_end - mask_start
 
-            subj_start = int(line.split("\t")[3])
-            subj_end = int(line.split("\t")[4])
-            obj_start = int(line.split("\t")[5])
-            obj_end = int(line.split("\t")[6])
-            arg2_start = int(line.split("\t")[7])
-            arg2_end = int(line.split("\t")[8])
+            subj_start = -1
+            subj_end = -1
+            obj_start = -1
+            obj_end = -1
+            arg2_start = -1
+            arg2_end = -1
+
+            if len(line.split("\t")) > 3:
+                subj_start = int(line.split("\t")[3])
+                subj_end = int(line.split("\t")[4])
+                obj_start = int(line.split("\t")[5])
+                obj_end = int(line.split("\t")[6])
+                arg2_start = int(line.split("\t")[7])
+                arg2_end = int(line.split("\t")[8])
 
             if subj_start >= mask_end:
                 subj_start -= mask_end - mask_start
@@ -530,37 +538,37 @@ class GigawordExtractor:
                         "\t" + str(arg2_start) + "\t" + str(arg2_end) + "\n")
 
 
-# class PretrainedModel:
-#     """
-#     A pretrained model is determined by both an archive file
-#     (representing the trained model)
-#     and a choice of predictor.
-#     """
-#     def __init__(self, archive_file: str, predictor_name: str) -> None:
-#         self.archive_file = archive_file
-#         self.predictor_name = predictor_name
-#
-#     def predictor(self) -> Predictor:
-#         archive = load_archive(self.archive_file)
-#         return Predictor.from_archive(archive, self.predictor_name)
-#
-#
-# class AllenSRL:
-#
-#     def __init__(self):
-#         model = PretrainedModel('https://s3-us-west-2.amazonaws.com/allennlp/models/srl-model-2018.05.25.tar.gz',
-#                                 'semantic-role-labeling')
-#         self.predictor = model.predictor()
-#
-#     def predict_batch(self, sentences):
-#         for sentence in sentences:
-#             prediction = self.predictor.predict(sentence)
-#             print(prediction)
-#
-#     def predict_file(self, path):
-#         with open(path) as f:
-#             lines = [x.strip() for x in f.readlines()]
-#         self.predict_batch(lines)
+class PretrainedModel:
+    """
+    A pretrained model is determined by both an archive file
+    (representing the trained model)
+    and a choice of predictor.
+    """
+    def __init__(self, archive_file: str, predictor_name: str) -> None:
+        self.archive_file = archive_file
+        self.predictor_name = predictor_name
+
+    def predictor(self) -> Predictor:
+        archive = load_archive(self.archive_file)
+        return Predictor.from_archive(archive, self.predictor_name)
+
+
+class AllenSRL:
+
+    def __init__(self):
+        model = PretrainedModel('https://s3-us-west-2.amazonaws.com/allennlp/models/srl-model-2018.05.25.tar.gz',
+                                'semantic-role-labeling')
+        self.predictor = model.predictor()
+
+    def predict_batch(self, sentences):
+        for sentence in sentences:
+            prediction = self.predictor.predict(sentence)
+            print(prediction)
+
+    def predict_file(self, path):
+        with open(path) as f:
+            lines = [x.strip() for x in f.readlines()]
+        self.predict_batch(lines)
 
 
 class SRLRunner:
@@ -637,6 +645,12 @@ class SRLRunner:
                 end += 1
         return start, end
 
+    def has_negation(self, tags):
+        for t in tags:
+            if t == "B-ARGM-NEG":
+                return True
+        return False
+
     def parse_srl_file(self, path):
         lines = [x.strip() for x in open(path).readlines()]
         reader = jsonlines.Reader(lines)
@@ -684,7 +698,7 @@ class SRLRunner:
         lines = [x.strip() for x in open("samples/duration/duration_srl_succeed.jsonl").readlines()]
         reader = jsonlines.Reader(lines)
 
-        f_out = open("samples/duration/verb_formatted_all_svo_better_filter_3.txt", "w")
+        f_out = open("samples/duration/verb_formatted_all_svo_better_filter_4.txt", "w")
         for obj in reader:
             tokens = obj["TOKENS"]
             sentence = ' '.join(tokens)
@@ -695,7 +709,11 @@ class SRLRunner:
                 subj_start, subj_end = self.get_subj_position(tags)
                 obj_start, obj_end = self.get_obj_position(tags)
                 arg3_start, arg3_end = self.get_arg3_position(tags)
+                if self.has_negation(tags):
+                    continue
                 if verb_pos == -1 or start == -1 or end == -1:
+                    continue
+                if subj_start == -1 and obj_start == -1 and arg3_start == -1:
                     continue
                 for j in range(start, end):
                     tokens[j] = "[MASK]"
@@ -708,7 +726,6 @@ class SRLRunner:
         f_out = open(out_path, "w")
 
         # for line in lines:
-
 
     def prepare_verb_file_for_failures(self):
         lines = [x.strip() for x in open("samples/duration/duration_srl_fail.jsonl").readlines()]
@@ -978,29 +995,74 @@ class SRLRunner:
                         verb_pos = self.get_verb_position(tags)
                         subj_start, subj_end = self.get_subj_position(tags)
                         obj_start, obj_end = self.get_obj_position(tags)
+                        arg2_start, arg2_end = self.get_arg3_position(tags)
                         if verb_pos == -1:
                             continue
                         f_out.write(" ".join(new_tokens) + "\t" + str(verb_pos) + "\t" + line.split("\t")[2] + "\t" + line.split("\t")[3] + "\t" +
-                                    str(subj_start) + "\t" + str(subj_end) + "\t" + str(obj_start) + "\t" + str(obj_end) + "\n")
+                                    str(subj_start) + "\t" + str(subj_end) + "\t" + str(obj_start) + "\t" + str(obj_end) +
+                                    "\t" + str(arg2_start) + "\t" + str(arg2_end) + "\n")
                         wrote = True
                         break
             if not wrote:
                 f_out.write(" ".join(tokens) + "\t" + str(target_idx) + "\t" + line.split("\t")[2] + "\t" + line.split("\t")[3] + "\t" +
-                            str(-1) + "\t" + str(-1) + "\t" + str(-1) + "\t" + str(-1) + "\n")
+                            str(-1) + "\t" + str(-1) + "\t" + str(-1) + "\t" + str(-1) + "\t" + str(-1) + "\t" + str(-1) + "\n")
 
     def filter_only_verb_timebank(self):
         source_lines = [x.strip() for x in open("samples/duration/timebank_svo.txt").readlines()]
+        srl_objects = list(jsonlines.Reader([x.strip() for x in open("samples/timebank_srl.jsonl").readlines()]))
         f_out = open("samples/duration/timebank_svo_verbonly_strict.txt", "w")
-        for line in source_lines:
+        for i, line in enumerate(source_lines):
             tokens = line.split("\t")[0].split()
+            cont = True
+            for t in tokens:
+                if t.lower() in self.extractor.duration_keys:
+                    cont = False
+            if not cont:
+                continue
             ta = self.extractor.pipeline.doc([tokens], pretokenized=True)
             verb_pos = int(line.split("\t")[1])
-            # if ta.get_pos[verb_pos]['label'][0] == "V" and int(line.split("\t")[4]) > -1 and int(line.split("\t")[6]) > -1:
-            if ta.get_pos[verb_pos]['label'][0] == "V":
-                f_out.write(line + "\n")
-            else:
+            pos_1 = int(line.split("\t")[4])
+            pos_2 = int(line.split("\t")[6])
+            pos_3 = int(line.split("\t")[8])
+            neg_count = 0
+            if pos_1 == -1:
+                neg_count += 1
+            if pos_2 == -1:
+                neg_count += 1
+            if pos_3 == -1:
+                neg_count += 1
+            if ta.get_pos[verb_pos]['label'][0] == "V" and neg_count < 3:
                 tokens[verb_pos] = "[" + tokens[verb_pos] + "]"
-                print(" ".join(tokens))
+                f_out.write(line + "\n")
+                pass
+            # elif ta.get_pos[verb_pos]['label'] == "JJ":
+            #     if int(line.split("\t")[4]) > -1 or int(line.split("\t")[6]) > -1 or int(line.split("\t")[8]) > -1:
+            #         f_out.write(line + "\n")
+            #         continue
+            #     obj = srl_objects[i]
+            #     found = False
+            #     for verb in obj['verbs']:
+            #         tags = verb['tags']
+            #         arg0_s, arg0_e = self.get_subj_position(tags)
+            #         arg1_s, arg1_e = self.get_obj_position(tags)
+            #         arg2_s, arg2_e = self.get_arg3_position(tags)
+            #         groups = line.split("\t")
+            #         if arg2_s <= verb_pos < arg2_e:
+            #             v_pos = self.get_verb_position(tags)
+            #             f_out.write(groups[0] + "\t" + str(v_pos) + "\t" + groups[2] + "\t" + groups[3] + "\t"
+            #                         + str(arg0_s) + "\t" + str(arg0_e) + "\t"
+            #                         + str(arg1_s) + "\t" + str(arg1_e) + "\t"
+            #                         + str(arg2_s) + "\t" + str(arg2_e) + "\n")
+            #             found = True
+            #             break
+            #     if not found:
+            #         f_out.write(line + "\n")
+            #         pass
+            # else:
+            #     f_out.write(line + "\n")
+            #     # tokens[verb_pos] = "[" + tokens[verb_pos] + "]"
+            #     # print(" ".join(tokens))
+            #     pass
 
 
 
@@ -1094,6 +1156,41 @@ class VerbBaseline:
         quantity = float(timex.split()[0])
         unit_val = self.convert_map[timex.split()[1].lower()]
         return quantity * unit_val
+
+    def get_top_verbs(self, in_file, out_file):
+        lines = [x.strip() for x in open(in_file).readlines()]
+        output_map = {}
+        count = 0
+        for line in lines:
+            tokens = line.split("\t")[0].split()
+            verb_pos = int(line.split("\t")[1])
+            seconds = self.get_seconds_from_timex(line.split("\t")[2])
+            if seconds > 290304000.0:
+                continue
+            count += 1
+            if count % 1000 == 0:
+                print("Processed: " + str(count))
+            doc = self.pipeline.doc([tokens], pretokenized=True)
+            key = list(doc.get_lemma)[verb_pos]["label"].lower()
+
+            if key not in output_map:
+                output_map[key] = 0
+
+            output_map[key] += 1
+
+        pickle.dump(output_map, open(out_file, "wb"))
+
+    def print_top_verbs(self, in_pickle):
+        m = pickle.load(open(in_pickle, "rb"))
+        count = 0
+        for f in sorted(m.items(), key=lambda kv: (kv[1], kv[0]), reverse=True):
+            print(f[0])
+            count += 1
+            if count > 100:
+                break
+
+    def save_map(self, output_path):
+        pickle.dump(self.output_map, open(output_path, "wb"))
 
     def process(self, output_prefix):
         lines = [x.strip() for x in open(self.path).readlines()]
@@ -1204,6 +1301,33 @@ class VerbBaseline:
         label_num = float(exp)
 
         return label_num * self.convert_map[unit]
+
+    def transform_expression(self, exp):
+        unit = ""
+        if exp.startswith("PT") and exp[-1] == "M":
+            unit = "minute"
+        if exp[-1] == "M" and exp[1] != "T":
+            unit = "month"
+        if exp[-1] == "Y":
+            unit = "year"
+        if exp[-1] == "D":
+            unit = "day"
+        if exp[-1] == "W":
+            unit = "week"
+        if exp[-1] == "H":
+            unit = "hour"
+        if exp[-1] == "S":
+            unit = "second"
+        if exp.startswith("PT"):
+            exp = exp[2:]
+        else:
+            exp = exp[1:]
+        if unit == "" or exp == "NULL":
+            return None
+        exp = exp[:-1]
+        label_num = int(exp)
+
+        return str(label_num) + " " + unit
 
     def get_label(self, lowerbound, upperbound):
         lower_val = self.get_seconds(lowerbound)
@@ -1336,9 +1460,36 @@ class VerbBaseline:
             print(str(p) + ", " + str(r) + ", " + str(f))
             print()
 
+    def prepare_annotation(self):
+        import math
+        lines = [x.strip() for x in open("samples/duration/timebank_svo_verbonly_strict.txt").readlines()]
+        f_out = open("samples/duration/timebank_mturk.txt", "w")
+        for line in lines:
+            groups = line.split("\t")
+            tokens = groups[0].split()
+            verb_pos = int(groups[1])
+            tokens[verb_pos] = "<strong><font color='red'>" + tokens[verb_pos] + "</font></strong>"
+            lower_val = self.get_seconds(groups[2])
+            upper_val = self.get_seconds(groups[3])
+            lower_e = math.log(lower_val)
+            upper_e = math.log(upper_val)
+
+            if (lower_e + upper_e) / 2.0 >= 11.3666:
+                true_label = "long"
+            else:
+                true_label = "short"
+
+            # phrase = "LONGER than a day"
+            # if true_label == "long":
+            #     phrase = "SHORTER than a day"
+            phrase_1 = "SHORTER than " + self.transform_expression(groups[2])
+            phrase_2 = "LONGER than " + self.transform_expression(groups[3])
+
+            f_out.write(" ".join(tokens) + "\t" + phrase_1 + "\t" + phrase_2 + "\n")
+
     def print_errors(self):
         import math
-        data_lines = [x.strip() for x in open("samples/duration/timebank_svo_verbonly.txt").readlines()]
+        data_lines = [x.strip() for x in open("samples/duration/timebank_svo_improved.txt").readlines()]
         prediction_lines = [x.strip() for x in open("results.txt").readlines()]
         f_out = open("tmp_output.txt", "w")
         verb_freq = {}
@@ -1373,14 +1524,16 @@ class VerbBaseline:
                 predicted_label = "short"
             if v == "announce":
                 predicted_label = "short"
-            if v == "think":
-                predicted_label = "long"
-            if v == "believe":
-                predicted_label = "long"
+            if v == "report":
+                predicted_label = "short"
             if v == "touch":
                 predicted_label = "short"
             if v == "kill":
                 predicted_label = "short"
+            if v == "think":
+                predicted_label = "long"
+            if v == "believe":
+                predicted_label = "long"
             all_preds.append(predicted_label)
             tokens[int(groups[1])] = "[" + tokens[int(groups[1])] + "]"
             # if v not in verb_freq:
@@ -1496,6 +1649,20 @@ class VerbBaseline:
         norm = scores / np.linalg.norm(scores)
         print(norm)
 
+        bucket_a = []
+        bucket_b = []
+        for line in lines:
+            timex = line.split("\t")[2]
+            seconds = self.get_seconds_from_timex(timex)
+            if 24 * 3600.0 > seconds:
+                bucket_a.append(line)
+            elif 290304000.0 > seconds:
+                bucket_b.append(line)
+        len_a = float(len(bucket_a))
+        len_b = float(len(bucket_b))
+        print(len_a)
+        print(len_b)
+
 
 
         # random.shuffle(bucket_a)
@@ -1517,6 +1684,13 @@ class VerbBaseline:
         #     f_out.write(sent + "\t" + line.split("\t")[2] + "\n")
 
 
+class VerbPhysicsInstance:
+    def __init__(self, obj_1, obj_2, label):
+        self.obj_1 = obj_1
+        self.obj_2 = obj_2
+        self.label = label
+
+
 class VerbPhysicsEval:
 
     def __init__(self):
@@ -1525,7 +1699,7 @@ class VerbPhysicsEval:
     def process_raw_file(self, paths, out_path):
         lines = []
         for path in paths:
-            lines +=  [x.strip() for x in open(path).readlines()]
+            lines += [x.strip() for x in open(path).readlines()]
         obj_set = set()
         for line in lines:
             if line[0] == ",":
@@ -1536,10 +1710,17 @@ class VerbPhysicsEval:
         verbs = [
             "clean", "make", "build", "use", "move",
             "lift", "take", "try", "play", "hold",
-            "turn", "cut", "throw", "open", "wash"
+            "turn", "cut", "throw", "open", "wash",
+            "buy", "receive", "write", "kick", "start",
+            "break", "destroy", "smash", "split", "fight",
+            "climb", "dig", "stack", "shake", "ride",
         ]
+        verbs_size = ["clean", "move", "make", "store", "hide", "climb", "hold", "wash"]
+        verbs_100 = ["be", "hold", "play", "have", "go", "work", "make", "take", "wait", "do", "live", "stay", "run", "lose", "kill", "win", "come", "see", "keep", "get", "rise", "suspend", "leave", "score", "meet", "fall", "pay", "remain", "spend", "sell", "increase", "serve", "cook", "put", "grow", "cut", "give", "close", "double", "receive", "sit", "become", "raise", "detain", "use", "complete", "return", "continue", "try", "hit", "open", "begin", "reach", "send", "drop", "fight", "die", "say", "start", "move", "turn", "build", "lead", "delay", "change", "bring", "speak", "miss", "provide", "ban", "stand", "set", "find", "finish", "reduce", "expect", "report", "jail", "beat", "talk", "happen", "sideline", "add", "simmer", "face", "sign", "invest", "show", "visit", "buy", "look", "stop", "know", "shut", "cost", "drive", "carry", "decide", "save", "bake"]
+
+        verbs = verbs_100
         pronouns = ["he", "they", "I", "she"]
-        rest = "\t1\t1.0 hour\t0\t1\t2\t3\n"
+        rest = "\t1\t1.0 hour\t0\t1\t2\t3\t-1\t-1\n"
         f_out = open(out_path, "w")
         for obj in obj_set:
             for v in verbs:
@@ -1570,30 +1751,79 @@ class VerbPhysicsEval:
             if obj not in obj_map:
                 obj_map[obj] = {}
             if verb not in obj_map[obj]:
-                obj_map[obj][verb] = [0.0] * 100
+                obj_map[obj][verb] = 0.0
 
-            embed_list = [float(x) for x in embed_lines[i].split("\t")]
-            obj_map[obj][verb] = self.add_list(obj_map[obj][verb], embed_list)
+            embed = float(embed_lines[i])
+            obj_map[obj][verb] += embed
 
         # verbs = ["clean", "make", "build", "use", "move"]
         # verbs = ["clean", "make", "build", "use", "move", "lift", "take", "try", "play", "hold"]
-        verbs = [
-            "clean", "make", "build", "use", "move",
-            "lift", "take", "try", "play", "hold",
-            "turn", "cut", "throw", "open", "wash"
-        ]
-        embedding_file = open("samples/verbphysics/train-5/obj_embedding_15v_1h.pkl", "wb")
+        # verbs = [
+        #     "clean", "make", "build", "use", "move",
+        #     "lift", "take", "try", "play", "hold",
+        #     "turn", "cut", "throw", "open", "wash",
+        #     "buy", "receive", "write", "kick", "start",
+        #     "break", "destroy", "smash", "split", "fight",
+        #     "climb", "dig", "stack", "shake", "ride",
+        # ]
+        verbs = ["be", "hold", "play", "have", "go", "work", "make", "take", "wait", "do", "live", "stay", "run", "lose", "kill", "win", "come", "see", "keep", "get", "rise", "suspend", "leave", "score", "meet", "fall", "pay", "remain", "spend", "sell", "increase", "serve", "cook", "put", "grow", "cut", "give", "close", "double", "receive", "sit", "become", "raise", "detain", "use", "complete", "return", "continue", "try", "hit", "open", "begin", "reach", "send", "drop", "fight", "die", "say", "start", "move", "turn", "build", "lead", "delay", "change", "bring", "speak", "miss", "provide", "ban", "stand", "set", "find", "finish", "reduce", "expect", "report", "jail", "beat", "talk", "happen", "sideline", "add", "simmer", "face", "sign", "invest", "show", "visit", "buy", "look", "stop", "know", "shut", "cost", "drive", "carry", "decide", "save", "bake"]
+        embedding_file = open("samples/verbphysics/train-5/obj_embedding_100v_mean.pkl", "wb")
         embed_map = {}
         for key in obj_map:
-            main_list = []
+            if key not in embed_map:
+                embed_map[key] = []
             for v in verbs:
-                main_list += self.div_list(obj_map[key][v], 4)
-            assert len(main_list) == 1500
-            embed_map[key] = main_list
+                embed_map[key].append(obj_map[key][v] / 4.0)
 
         pickle.dump(embed_map, embedding_file)
 
+    def read_instances(self, file_name):
+        instances = []
+        for line in [x.strip() for x in open(file_name).readlines()]:
+            if line[0] == ",":
+                continue
+            group = line.split(",")
+            obj_1 = group[1]
+            obj_2 = group[2]
 
+            label_map = {
+                "1": 0,
+                "-1": 1,
+                "0": 2,
+                "-42": 3,
+            }
+            instance = VerbPhysicsInstance(obj_1, obj_2, label_map[group[4]])
+            if instance.label < 2:
+                instances.append(instance)
+        return instances
+
+    def run_unsupervisied(self):
+        obj_means = pickle.load(open("samples/verbphysics/train-5/obj_embedding_30v_mean.pkl", "rb"))
+        instances = self.read_instances("samples/verbphysics/train-5/dev.csv")
+
+        all_preds = []
+        all_labels = []
+
+        for instance in instances:
+            mean_1 = obj_means[instance.obj_1]
+            mean_2 = obj_means[instance.obj_2]
+            label = instance.label
+
+            # if float(abs(mean_2 - mean_1)) / float(min(mean_1, mean_2)) < 0.000000001:
+            #     prediction = 2
+            if mean_2 > mean_1:
+                prediction = 1
+            else:
+                prediction = 0
+
+            all_labels.append(label)
+            all_preds.append(prediction)
+        assert len(all_preds) == len(all_labels)
+        correct = 0.0
+        for i, p in enumerate(all_preds):
+            if all_labels[i] == p:
+                correct += 1.0
+        print("Acc.: " + str(correct / float(len(all_preds))))
 
 
 if __name__ == "__main__":
@@ -1608,17 +1838,17 @@ if __name__ == "__main__":
     # srl = AllenSRL()
     # srl.predict_file("samples/duration_afp_eng_filtered.txt")
 
-    runner = SRLRunner()
+    # runner = SRLRunner()
     # runner.eval_temporal()
-    runner.filter_only_verb_timebank()
     # runner.count_label("samples/duration/verb_formatted_all_svo.txt")
     # runner.prepare_timebank_srl()
+    # runner.filter_only_verb_timebank()
     # runner.prepare_timebank_file()
     # runner.parse_srl_file("samples/duration_srl_verbs.476452.jsonl")
     # runner.parse_srl_file("samples/duration_srl_verbs_3.jsonl")
     # runner.parse_srl_file("samples/duration/verb_nyt_svo.jsonl")
     # runner.prepare_verb_file()
-    # runner.remove_dups("samples/duration/verb_formatted_all_svo_better_filter_3.txt", "samples/duration/verb_formatted_all_svo_better_filter_3.txt")
+    # runner.remove_dups("samples/duration/verb_formatted_all_svo_better_filter_4.txt", "samples/duration/verb_formatted_all_svo_better_filter_4.txt")
     # runner.prepare_verb_file_for_failures()
     # runner.print_random_srl_json()
     # runner.print_random_srl()
@@ -1626,17 +1856,21 @@ if __name__ == "__main__":
     # runner.print_file("samples/duration/duration_srl_fail.jsonl")
 
     # extractor = GigawordExtractor()
-    # extractor.get_rid_of_masks("samples/duration/verb_formatted_all_svo_better_filter_3.txt", "samples/duration/verb_formatted_all_svo_better_filter_3.txt")
+    # extractor.get_rid_of_masks("samples/duration/verb_formatted_all_svo_better_filter_4.txt", "samples/duration/verb_formatted_all_svo_better_filter_4.txt")
+    # extractor.get_rid_of_masks("samples/duration/all/nominals_formatted.txt", "samples/duration/all/nominals_formatted_train.txt")
 
     # baseline = VerbBaseline("samples/duration/all/verbs.txt")
     # baseline.process("samples/duration/all/nearest_verb_cont/partition_")
     # VerbBaseline.merge_map("samples/duration/all/nearest_verb_all/partition_", "samples/duration/all/nearest_verb.pkl")
     # VerbBaseline.exp_output("samples/duration/all/nearest_verb.pkl", "work")
 
-    # baseline = VerbBaseline("")
+    baseline = VerbBaseline("")
+    # baseline.prepare_annotation()
+    # baseline.get_top_verbs("samples/duration/verb_formatted_all_svo_better_filter_3.txt", "samples/tmp_map.pkl")
+    # baseline.print_top_verbs("samples/tmp_map.pkl")
     # baseline.print_errors()
     # baseline.print_verb_distribution()
-    # baseline.sampling_data()
+    baseline.sampling_data()
     # baseline.find_distribution()
     # baseline.test_file("samples/duration/all/nearest_verb.pkl", "samples/duration/timebank_formatted.txt")
 
@@ -1644,5 +1878,6 @@ if __name__ == "__main__":
     # verbphysics.process_raw_file([
     #     "samples/verbphysics/train-5/train.csv",
     #     "samples/verbphysics/train-5/test.csv",
-    #     "samples/verbphysics/train-5/dev.csv",], "samples/verbphysics/train-5/obj_file_15v.txt")
-    # verbphysics.process_embedding_file("samples/verbphysics/train-5/obj_file_15v.txt", "result_logits.txt")
+    #     "samples/verbphysics/train-5/dev.csv",], "samples/verbphysics/train-5/obj_file_100v.txt")
+    # verbphysics.process_embedding_file("samples/verbphysics/train-5/obj_file_100v.txt", "result_logits.txt")
+    # verbphysics.run_unsupervisied()

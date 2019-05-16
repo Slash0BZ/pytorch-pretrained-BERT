@@ -347,9 +347,18 @@ class TemporalVerbProcessor(DataProcessor):
             if int(groups[5]) > -1:
                 for j in range(int(groups[5]), int(groups[6])):
                     obj_mask[j] = 1
+                    """
+                    ATTENTION
+                    """
+                    subj_mask[j] = 1
             if int(groups[7]) > -1:
                 for j in range(int(groups[7]), int(groups[8])):
                     arg3_mask[j] = 1
+                    """
+                    ATTENTION
+                    """
+                    subj_mask[j] = 1
+            subj_mask[target_idx] = 1
 
             examples.append(
                 InputExample(
@@ -490,6 +499,7 @@ class TimebankProcessor(DataProcessor):
 
             subj_mask = [0] * len(text_a.split())
             obj_mask = [0] * len(text_a.split())
+            arg3_mask = [0] * len(text_a.split())
 
             if int(groups[4]) > -1:
                 for j in range(int(groups[4]), int(groups[5])):
@@ -497,6 +507,9 @@ class TimebankProcessor(DataProcessor):
             if int(groups[6]) > -1:
                 for j in range(int(groups[6]), int(groups[7])):
                     obj_mask[j] = 1
+            if int(groups[8]) > -1:
+                for j in range(int(groups[8]), int(groups[9])):
+                    arg3_mask[j] = 1
 
             label_num = int(float(label_upper + label_lower) / 2.0)
 
@@ -516,7 +529,7 @@ class TimebankProcessor(DataProcessor):
             examples.append(
                 InputExample(guid=guid, text_a=text_a, label=true_label, target_idx=target_idx, tolerance=max(1, max(
                     abs(label_lower - label_num), abs(label_upper - label_num)
-                )), subj_mask=subj_mask, obj_mask=obj_mask)
+                )), subj_mask=subj_mask, obj_mask=obj_mask, arg3_mask=arg3_mask)
             )
         return examples
 
@@ -1330,6 +1343,8 @@ def main():
     model = BertForTemporalClassification.from_pretrained(args.bert_model,
               cache_dir=cache_dir,
               num_labels=num_labels)
+    for p in model.bert.parameters():
+        p.requires_grad = False
     if args.fp16:
         model.half()
     model.to(device)
@@ -1497,13 +1512,14 @@ def main():
         all_tolerances = torch.tensor([f.tolerance for f in eval_features], dtype=torch.long)
         all_subj_masks = torch.tensor([f.subj_mask for f in eval_features], dtype=torch.long)
         all_obj_masks = torch.tensor([f.obj_mask for f in eval_features], dtype=torch.long)
+        all_arg3_masks = torch.tensor([f.obj_mask for f in eval_features], dtype=torch.long)
 
         if output_mode == "classification":
             all_label_ids = torch.tensor([f.label_id for f in eval_features], dtype=torch.long)
         elif output_mode == "regression":
             all_label_ids = torch.tensor([f.label_id for f in eval_features], dtype=torch.float)
 
-        eval_data = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_label_ids, all_target_idxs, all_tolerances, all_subj_masks, all_obj_masks)
+        eval_data = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_label_ids, all_target_idxs, all_tolerances, all_subj_masks, all_obj_masks, all_arg3_masks)
         # Run prediction for full data
         eval_sampler = SequentialSampler(eval_data)
         eval_dataloader = DataLoader(eval_data, sampler=eval_sampler, batch_size=args.eval_batch_size)
@@ -1514,7 +1530,7 @@ def main():
         preds = []
 
         f_logits_out = open("./result_logits.txt", "w")
-        for input_ids, input_mask, segment_ids, label_ids, target_idxs, tolerances, subj_masks, obj_masks in tqdm(eval_dataloader, desc="Evaluating"):
+        for input_ids, input_mask, segment_ids, label_ids, target_idxs, tolerances, subj_masks, obj_masks, arg3_masks in tqdm(eval_dataloader, desc="Evaluating"):
             input_ids = input_ids.to(device)
             input_mask = input_mask.to(device)
             segment_ids = segment_ids.to(device)
@@ -1522,9 +1538,10 @@ def main():
             target_idxs = target_idxs.to(device)
             subj_masks = subj_masks.to(device)
             obj_masks = obj_masks.to(device)
+            arg3_masks = arg3_masks.to(device)
 
             with torch.no_grad():
-                pi, mu, sigma = model(input_ids, segment_ids, input_mask, labels=None, target_idx=target_idxs, subj_mask=subj_masks, obj_mask=obj_masks)
+                pi, mu, sigma = model(input_ids, segment_ids, input_mask, labels=None, target_idx=target_idxs, subj_mask=subj_masks, obj_mask=obj_masks, arg3_mask=arg3_masks)
 
             # create eval loss and other metric required by the task
             if output_mode == "classification":
@@ -1535,16 +1552,24 @@ def main():
                 m = torch.distributions.Normal(loc=mu, scale=sigma)
                 divident = 290304000.0
                 day_val = 24.0 * 3600.0 / divident
-                # day_val = math.log(24.0 * 3600) / 22.0
                 day_cdf = torch.sum(m.cdf(day_val) * pi, dim=1).detach().cpu().numpy()
                 rest_cdf = torch.sum(m.cdf(1.0) * pi, dim=1).detach().cpu().numpy()
                 for i, v in enumerate(day_cdf):
-                    print(v)
-                    print(rest_cdf[i])
-                    if v >= 0.1 * rest_cdf[i]:
+                    if 4.615 * v >= rest_cdf[i] - v:
                         preds.append(0)
                     else:
                         preds.append(1)
+
+                tmp_map = {}
+                mean = torch.sum(mu * pi, dim=1).detach().cpu().numpy()
+                for j, c in enumerate(mean):
+                    tmp_map[j] = c
+                for i in range(0, 8):
+                    if i not in tmp_map:
+                        break
+                    vals = tmp_map[i]
+                    concat = str(vals) + "\n"
+                    f_logits_out.write(concat)
 
                 # mu_numpy = mu.detach().cpu().numpy()
                 # sigma_numpy = sigma.detach().cpu().numpy()
@@ -1562,32 +1587,28 @@ def main():
                 #     f_logits_out.write(concat + "\n")
 
 
-                prev = None
-                tmp_map = {}
-                for i in range(1, 101):
-                    # val = float(math.exp(float(i))) / divident
-                    # val = float(i) / 40.0 / 22.0
-                    val = float(i) * 3600.0 / divident
-                    # val = math.log(val) / 22.0
-                    # val = math.log(float(i) * 3600) / 22.0
-                    cdf = torch.sum(m.cdf(val) * pi, dim=1).detach().cpu().numpy()
-                    cdf_copy = torch.sum(m.cdf(val) * pi, dim=1).detach().cpu().numpy()
-                    if prev is not None:
-                        cdf = np.subtract(cdf, prev)
-                    for j, c in enumerate(cdf):
-                        if j not in tmp_map:
-                            tmp_map[j] = []
-                        tmp_map[j].append(c)
-                    prev = cdf_copy
-                for i in range(0, 8):
-                    if i not in tmp_map:
-                        break
-                    vals = tmp_map[i]
-                    concat = ""
-                    for v in vals:
-                        concat += str(v) + "\t"
-                    concat += "\n"
-                    f_logits_out.write(concat)
+                # prev = torch.sum(m.cdf(0.0) * pi, dim=1).detach().cpu().numpy()
+                # tmp_map = {}
+                # for i in range(1, 6):
+                #     val = float(i) * 1800 / divident
+                #     cdf = torch.sum(m.cdf(val) * pi, dim=1).detach().cpu().numpy()
+                #     cdf_copy = torch.sum(m.cdf(val) * pi, dim=1).detach().cpu().numpy()
+                #     if prev is not None:
+                #         cdf = np.subtract(cdf, prev)
+                #     for j, c in enumerate(cdf):
+                #         if j not in tmp_map:
+                #             tmp_map[j] = []
+                #         tmp_map[j].append(c)
+                #     prev = cdf_copy
+                # for i in range(0, 8):
+                #     if i not in tmp_map:
+                #         break
+                #     vals = tmp_map[i]
+                #     concat = ""
+                #     for v in vals:
+                #         concat += str(v) + "\t"
+                #     concat += "\n"
+                #     f_logits_out.write(concat)
 
                 # prev = None
                 # tmp_map = {}

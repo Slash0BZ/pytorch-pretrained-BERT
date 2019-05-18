@@ -109,7 +109,7 @@ class Runner:
         # if os.path.isfile("./glove_cache.pkl"):
         #     self.glove_model = FakeGlove(pickle.load(open("./glove_cache.pkl", "rb")))
         # else:
-        self.glove_model = gensim.models.KeyedVectors.load_word2vec_format("data/glove_model.txt", binary=False)
+        # self.glove_model = gensim.models.KeyedVectors.load_word2vec_format("data/glove_model.txt", binary=False)
         self.embedding = pickle.load(open(embedding_file, "rb"))
         self.cache_glove_map = {}
         self.train_data = self.load_data_file(train_data)
@@ -135,7 +135,7 @@ class Runner:
     def load_data_file(self, file_name):
         instances = []
         for line in [x.strip() for x in open(file_name).readlines()]:
-            if line[0] == ",":
+            if line[0] == "," or line[0:4] == "obj1":
                 continue
             group = line.split(",")
             obj_1 = group[0]
@@ -151,22 +151,22 @@ class Runner:
             glove_1 = [0] * self.glove_size
             glove_2 = [0] * self.glove_size
 
-            if obj_1 in self.glove_model.vocab:
-                glove_1 = list(self.glove_model.get_vector(obj_1))
-                self.cache_glove_map[obj_1] = glove_1
-            if obj_2 in self.glove_model.vocab:
-                glove_2 = list(self.glove_model.get_vector(obj_2))
-                self.cache_glove_map[obj_2] = glove_2
+            # if obj_1 in self.glove_model.vocab:
+            #     glove_1 = list(self.glove_model.get_vector(obj_1))
+            #     self.cache_glove_map[obj_1] = glove_1
+            # if obj_2 in self.glove_model.vocab:
+            #     glove_2 = list(self.glove_model.get_vector(obj_2))
+            #     self.cache_glove_map[obj_2] = glove_2
 
             instance = self.Instance(
                 self.embedding[obj_1], self.embedding[obj_2],
-                # [0] * 100 + glove_1, [0] * 100 + glove_2,
+                # [0] * 100, [0] * 100,
                 glove_1, glove_2,
                 label_map[group[3]], self.num_label, self.input_size, 3,
                 list([0] * 100),
                 dimension_name="size"
             )
-            if instance.label != 3 and group[2] == "mass":
+            if instance.label != 3 and group[2].lower() == "speed":
                 instances.append(instance)
 
             # Adding weight
@@ -332,11 +332,11 @@ if __name__ == "__main__":
         # train_data="samples/verbphysics/train-5/train.csv",
         # dev_data="samples/verbphysics/train-5/dev.csv",
         # test_data="samples/verbphysics/train-5/test.csv",
-        train_data="samples/vp_clean/reannotations/vp_reannotate_train.csv",
-        dev_data="samples/vp_clean/reannotations/vp_reannotate_dev.csv",
-        test_data="samples/vp_clean/reannotations/vp_reannotate_test.csv",
-        embedding_file="samples/verbphysics/train-5/obj_embedding_100v_mean.pkl"
+        train_data="samples/vp_clean/new_data/train.csv",
+        dev_data="samples/vp_clean/new_data/dev.csv",
+        test_data="samples/vp_clean/new_data/test.csv",
+        embedding_file="samples/vp_clean/new_data/obj_embedding_100v_mean_33.pkl"
     )
-    runner.train(epoch=2000, batch_size=16)
+    runner.train(epoch=5000, batch_size=16)
     runner.eval(runner.dev_data)
     runner.eval(runner.test_data)

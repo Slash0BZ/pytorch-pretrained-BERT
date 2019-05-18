@@ -350,15 +350,17 @@ class TemporalVerbProcessor(DataProcessor):
                     """
                     ATTENTION
                     """
-                    subj_mask[j] = 1
+                    # subj_mask[j] = 1
             if int(groups[7]) > -1:
                 for j in range(int(groups[7]), int(groups[8])):
                     arg3_mask[j] = 1
                     """
                     ATTENTION
                     """
-                    subj_mask[j] = 1
+                    # subj_mask[j] = 1
             subj_mask[target_idx] = 1
+            obj_mask[target_idx] = 1
+            arg3_mask[target_idx] = 1
 
             examples.append(
                 InputExample(
@@ -1129,6 +1131,9 @@ def mdn_loss_fn(pi, sigma, mu, y, adjustments=None):
     zero_cdf[torch.isnan(zero_cdf)] = 0.0
     result += zero_cdf * 10.0
 
+    result[torch.isnan(result)] = 10.0
+    result[torch.isinf(result)] = 10.0
+
     # factor = 290304000.0
     # mu_1 = torch.narrow(mu, 1, 0, 1)
     # mask_1 = torch.where((math.exp(5.0) / factor) > mu_1, mu_1, torch.zeros(mu_1.size()[0], mu_1.size()[1]).cuda())
@@ -1200,7 +1205,7 @@ def main():
                         type=int,
                         help="Total batch size for training.")
     parser.add_argument("--eval_batch_size",
-                        default=8,
+                        default=48,
                         type=int,
                         help="Total batch size for eval.")
     parser.add_argument("--learning_rate",
@@ -1564,7 +1569,7 @@ def main():
                 mean = torch.sum(mu * pi, dim=1).detach().cpu().numpy()
                 for j, c in enumerate(mean):
                     tmp_map[j] = c
-                for i in range(0, 8):
+                for i in range(0, 48):
                     if i not in tmp_map:
                         break
                     vals = tmp_map[i]

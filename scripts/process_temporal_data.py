@@ -595,6 +595,14 @@ class SRLRunner:
             cur_list.append(tokens[i])
         return ret
 
+    def get_related_masks(self, tags):
+        ret = [0] * len(tags)
+        for i, t in enumerate(tags):
+            if t.startswith("B") or t.startswith("I"):
+                if "ARGM-TMP" not in t:
+                    ret[i] = 1
+        return ret
+
     def get_verb_position(self, tags):
         for i, t in enumerate(tags):
             if t == "B-V":
@@ -718,6 +726,40 @@ class SRLRunner:
                 for j in range(start, end):
                     tokens[j] = "[MASK]"
                 f_out.write(' '.join(tokens) + "\t" + str(verb_pos) + "\t" + obj["TMPVAL"] + "\t"
+                            + str(subj_start) + "\t" + str(subj_end) + "\t" + str(obj_start) + "\t" + str(obj_end) +
+                            "\t" + str(arg3_start) + "\t" + str(arg3_end) + "\n")
+
+    def prepare_simple_verb_file(self):
+        lines = [x.strip() for x in open("samples/duration/duration_srl_succeed.jsonl").readlines()]
+        reader = jsonlines.Reader(lines)
+
+        f_out = open("samples/duration/verb_formatted_all_simple.txt", "w")
+        for obj in reader:
+            tokens = obj["TOKENS"]
+            sentence = ' '.join(tokens)
+            if self.extractor.validate_sentence(sentence) and self.extractor.validate_argument(obj["ARGMTMP"]):
+                tags = obj["TAGS"]
+                mask = self.get_related_masks(tags)
+                verb_pos = self.get_verb_position(tags)
+                start, end = self.get_tmp_range(tags)
+                subj_start, subj_end = self.get_subj_position(tags)
+                obj_start, obj_end = self.get_obj_position(tags)
+                arg3_start, arg3_end = self.get_arg3_position(tags)
+                if self.has_negation(tags):
+                    continue
+                if verb_pos == -1 or start == -1 or end == -1:
+                    continue
+                if subj_start == -1 and obj_start == -1 and arg3_start == -1:
+                    continue
+                new_tokens = []
+                new_verb_pos = -1
+                for i, t in enumerate(tokens):
+                    if mask[i] > 0:
+                        new_tokens.append(t)
+                    if i == verb_pos:
+                        new_verb_pos = len(new_tokens) - 1
+
+                f_out.write(' '.join(new_tokens) + "\t" + str(new_verb_pos) + "\t" + obj["TMPVAL"] + "\t"
                             + str(subj_start) + "\t" + str(subj_end) + "\t" + str(obj_start) + "\t" + str(obj_end) +
                             "\t" + str(arg3_start) + "\t" + str(arg3_end) + "\n")
 
@@ -1064,8 +1106,6 @@ class SRLRunner:
             #     # print(" ".join(tokens))
             #     pass
 
-
-
     def remove_dups(self, input_file, output_file):
         source_lines = [x.strip() for x in open(input_file).readlines()]
         f_out = open(output_file, "w")
@@ -1074,6 +1114,38 @@ class SRLRunner:
             if line not in s:
                 s.add(line)
                 f_out.write(line + "\n")
+
+    def produce_simple_sents(self, input_file, output_file):
+        source_lines = [x.strip() for x in open(input_file).readlines()]
+        f_out = open(output_file, "w")
+        for line in source_lines:
+            tokens = line.split("\t")[0].split()
+            mask = [0] * len(tokens)
+            subj_start = int(line.split("\t")[3])
+            subj_end = int(line.split("\t")[4])
+            obj_start = int(line.split("\t")[5])
+            obj_end = int(line.split("\t")[6])
+            arg2_start = int(line.split("\t")[7])
+            arg2_end = int(line.split("\t")[8])
+            if subj_start > -1:
+                for i in range(subj_start, subj_end):
+                    mask[i] = 1
+            if obj_start > -1:
+                for i in range(obj_start, obj_end):
+                    mask[i] = 1
+            if arg2_start > -1:
+                for i in range(arg2_start, arg2_end):
+                    mask[i] = 1
+            mask[int(line.split("\t")[1])] = 2
+
+            final_tokens = []
+            verb_pos = -1
+            for i in range(len(tokens)):
+                if mask[i] > 0:
+                    final_tokens.append(tokens[i])
+                if mask[i] == 2:
+                    verb_pos = len(final_tokens) - 1
+            f_out.write(" ".join(final_tokens) + "\t" + str(verb_pos) + "\n")
 
     def eval_temporal(self):
         lines = [x.strip() for x in open("samples/tempeval/base-segmentation.tab").readlines()]
@@ -1487,6 +1559,32 @@ class VerbBaseline:
 
             f_out.write(" ".join(tokens) + "\t" + phrase_1 + "\t" + phrase_2 + "\n")
 
+    def prepare_pair_annotation(self):
+        import math
+        lines = [x.strip() for x in open("samples/duration/timebank_svo_verbonly_strict.txt").readlines()]
+        f_out = open("samples/duration/timebank_mturk_pair.txt", "w")
+        f_out_reserve = open("samples/duration/timebank_mturk_pair_train.txt", "w")
+        random.shuffle(lines)
+        train_lines = lines[:1000]
+        for l in train_lines:
+            f_out_reserve.write(l + "\n")
+        eval_lines = lines[1000:]
+        selected_set = set()
+        for i in range(0, 1000):
+            line_1 = random.choice(eval_lines)
+            line_2 = random.choice(eval_lines)
+            if line_1 == line_2:
+                continue
+            if line_1 + line_2 in selected_set or line_2 + line_1 in selected_set:
+                continue
+            selected_set.add(line_1 + line_2)
+            selected_set.add(line_2 + line_1)
+
+            groups = line_1.split("\t")
+            tokens = groups[0].split()
+            verb_pos = int(groups[1])
+            tokens[verb_pos] = "<strong><font color='red'>" + tokens[verb_pos] + "</font></strong>"
+
     def print_errors(self):
         import math
         data_lines = [x.strip() for x in open("samples/duration/timebank_svo_improved.txt").readlines()]
@@ -1704,8 +1802,8 @@ class VerbPhysicsEval:
         for line in lines:
             if line[0] == ",":
                 continue
+            obj_set.add(line.split(",")[0])
             obj_set.add(line.split(",")[1])
-            obj_set.add(line.split(",")[2])
 
         verbs = [
             "clean", "make", "build", "use", "move",
@@ -1767,7 +1865,7 @@ class VerbPhysicsEval:
         #     "climb", "dig", "stack", "shake", "ride",
         # ]
         verbs = ["be", "hold", "play", "have", "go", "work", "make", "take", "wait", "do", "live", "stay", "run", "lose", "kill", "win", "come", "see", "keep", "get", "rise", "suspend", "leave", "score", "meet", "fall", "pay", "remain", "spend", "sell", "increase", "serve", "cook", "put", "grow", "cut", "give", "close", "double", "receive", "sit", "become", "raise", "detain", "use", "complete", "return", "continue", "try", "hit", "open", "begin", "reach", "send", "drop", "fight", "die", "say", "start", "move", "turn", "build", "lead", "delay", "change", "bring", "speak", "miss", "provide", "ban", "stand", "set", "find", "finish", "reduce", "expect", "report", "jail", "beat", "talk", "happen", "sideline", "add", "simmer", "face", "sign", "invest", "show", "visit", "buy", "look", "stop", "know", "shut", "cost", "drive", "carry", "decide", "save", "bake"]
-        embedding_file = open("samples/verbphysics/train-5/obj_embedding_100v_mean.pkl", "wb")
+        embedding_file = open("samples/vp_clean/new_data/obj_embedding_100v_mean_33.pkl", "wb")
         embed_map = {}
         for key in obj_map:
             if key not in embed_map:
@@ -1838,7 +1936,7 @@ if __name__ == "__main__":
     # srl = AllenSRL()
     # srl.predict_file("samples/duration_afp_eng_filtered.txt")
 
-    # runner = SRLRunner()
+    runner = SRLRunner()
     # runner.eval_temporal()
     # runner.count_label("samples/duration/verb_formatted_all_svo.txt")
     # runner.prepare_timebank_srl()
@@ -1848,7 +1946,9 @@ if __name__ == "__main__":
     # runner.parse_srl_file("samples/duration_srl_verbs_3.jsonl")
     # runner.parse_srl_file("samples/duration/verb_nyt_svo.jsonl")
     # runner.prepare_verb_file()
+    runner.prepare_simple_verb_file()
     # runner.remove_dups("samples/duration/verb_formatted_all_svo_better_filter_4.txt", "samples/duration/verb_formatted_all_svo_better_filter_4.txt")
+    # runner.produce_simple_sents("samples/duration/verb_formatted_all_svo_better_filter_4.txt", "samples/duration/verb_formatted_all_simple.txt")
     # runner.prepare_verb_file_for_failures()
     # runner.print_random_srl_json()
     # runner.print_random_srl()
@@ -1864,17 +1964,21 @@ if __name__ == "__main__":
     # VerbBaseline.merge_map("samples/duration/all/nearest_verb_all/partition_", "samples/duration/all/nearest_verb.pkl")
     # VerbBaseline.exp_output("samples/duration/all/nearest_verb.pkl", "work")
 
-    baseline = VerbBaseline("")
     # baseline.prepare_annotation()
     # baseline.get_top_verbs("samples/duration/verb_formatted_all_svo_better_filter_3.txt", "samples/tmp_map.pkl")
     # baseline.print_top_verbs("samples/tmp_map.pkl")
     # baseline.print_errors()
     # baseline.print_verb_distribution()
-    baseline.sampling_data()
+    # baseline.sampling_data()
     # baseline.find_distribution()
     # baseline.test_file("samples/duration/all/nearest_verb.pkl", "samples/duration/timebank_formatted.txt")
 
     # verbphysics = VerbPhysicsEval()
+    # verbphysics.process_raw_file([
+    #     "samples/vp_clean/new_data/train.csv",
+    #     "samples/vp_clean/new_data/test.csv",
+    #     "samples/vp_clean/new_data/dev.csv",], "samples/vp_clean/new_data/obj_file_100v.txt")
+    # verbphysics.process_embedding_file("samples/vp_clean/new_data/obj_file_100v.txt", "result_logits.txt")
     # verbphysics.process_raw_file([
     #     "samples/verbphysics/train-5/train.csv",
     #     "samples/verbphysics/train-5/test.csv",

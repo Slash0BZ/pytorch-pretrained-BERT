@@ -333,34 +333,38 @@ class TemporalVerbProcessor(DataProcessor):
             #     adjustment = 0.1406
             # else:
             #     adjustment = 0.0594
-            label_idx = label_num * value_map[label_unit] / 290304000.0
+            # label_idx = label_num * value_map[label_unit] / 290304000.0
+            # label_idx = label_num * value_map[label_unit] / 2592000.0
+            # label_idx = label_num * value_map[label_unit] / 86400.0
+            label_idx = math.log(label_num * value_map[label_unit])
             # label_idx = math.log(label_num * value_map[label_unit]) / 22.0
-            if label_idx > 1.0:
+            # if label_idx > 1.0:
+            if label_idx > 23.0:
                 continue
             subj_mask = [0] * len(text_a.split())
             obj_mask = [0] * len(text_a.split())
             arg3_mask = [0] * len(text_a.split())
 
-            if int(groups[3]) > -1:
-                for j in range(int(groups[3]), int(groups[4])):
-                    subj_mask[j] = 1
-            if int(groups[5]) > -1:
-                for j in range(int(groups[5]), int(groups[6])):
-                    obj_mask[j] = 1
-                    """
-                    ATTENTION
-                    """
-                    # subj_mask[j] = 1
-            if int(groups[7]) > -1:
-                for j in range(int(groups[7]), int(groups[8])):
-                    arg3_mask[j] = 1
-                    """
-                    ATTENTION
-                    """
-                    # subj_mask[j] = 1
-            subj_mask[target_idx] = 1
-            obj_mask[target_idx] = 1
-            arg3_mask[target_idx] = 1
+            # if int(groups[3]) > -1:
+            #     for j in range(int(groups[3]), int(groups[4])):
+            #         subj_mask[j] = 1
+            # if int(groups[5]) > -1:
+            #     for j in range(int(groups[5]), int(groups[6])):
+            #         obj_mask[j] = 1
+            #         """
+            #         ATTENTION
+            #         """
+            #         # subj_mask[j] = 1
+            # if int(groups[7]) > -1:
+            #     for j in range(int(groups[7]), int(groups[8])):
+            #         arg3_mask[j] = 1
+            #         """
+            #         ATTENTION
+            #         """
+            #         # subj_mask[j] = 1
+            # subj_mask[target_idx] = 1
+            # obj_mask[target_idx] = 1
+            # arg3_mask[target_idx] = 1
 
             examples.append(
                 InputExample(
@@ -1118,42 +1122,54 @@ def gaussian_distribution(y, mu, sigma):
     result = -0.5 * (result * result)
     return torch.add((torch.exp(result) * torch.reciprocal(sigma)) * oneDivSqrtTwoPI, 1e-10)
 
-
 def mdn_loss_fn(pi, sigma, mu, y, adjustments=None):
-    result = gaussian_distribution(y, mu, sigma) * pi
+    result = gaussian_distribution(torch.exp(y), torch.exp(mu), torch.exp(sigma)) * pi
     result = torch.sum(result, dim=1)
+    result[torch.isnan(result)] = 1e-10
+    result[torch.isinf(result)] = 1e-10
     if adjustments is not None:
         result = result * adjustments
     result = -torch.log(result)
 
-    m = torch.distributions.Normal(loc=mu, scale=sigma)
+    m = torch.distributions.Normal(loc=torch.exp(mu), scale=torch.exp(sigma))
     zero_cdf = torch.sum(m.cdf(0.0) * pi, dim=1)
     zero_cdf[torch.isnan(zero_cdf)] = 0.0
     result += zero_cdf * 10.0
 
-    result[torch.isnan(result)] = 10.0
-    result[torch.isinf(result)] = 10.0
-
-    # factor = 290304000.0
-    # mu_1 = torch.narrow(mu, 1, 0, 1)
-    # mask_1 = torch.where((math.exp(5.0) / factor) > mu_1, mu_1, torch.zeros(mu_1.size()[0], mu_1.size()[1]).cuda())
-    # mask_1 = torch.nonzero(mask_1)
-    # mask_2 = ((math.exp(10.0) / factor) > mu[:, 1]) & (mu[:, 1] > (math.exp(5.0) / factor))
-    # mask_3 = ((math.exp(15.0) / factor) > mu[:, 2]) & (mu[:, 2] > (math.exp(10.0) / factor))
-    # mask_4 = mu[:, 3] > (math.exp(15.0) / factor)
-    #
-    # mask_1 = torch.abs(torch.sum(mask_1, dim=1, dtype=torch.float) - 1)
-    # mask_2 = torch.abs(torch.sum(mask_2, dim=0, dtype=torch.float) - 1)
-    # mask_3 = torch.abs(torch.sum(mask_3, dim=0, dtype=torch.float) - 1)
-    # mask_4 = torch.abs(torch.sum(mask_4, dim=0, dtype=torch.float) - 1)
-
-    # print(torch.mean(zero_cdf * 10.0))
-    # print(torch.mean(mask_1))
-    # print(torch.mean(mask_2))
-    # print(torch.mean(mask_3))
-    # print(torch.mean(mask_4))
-
     return torch.mean(result)
+
+# def mdn_loss_fn(pi, sigma, mu, y, adjustments=None):
+#     result = gaussian_distribution(y, mu, sigma) * pi
+#     result = torch.sum(result, dim=1)
+#     if adjustments is not None:
+#         result = result * adjustments
+#     result = -torch.log(result)
+#
+#     m = torch.distributions.Normal(loc=mu, scale=sigma)
+#     zero_cdf = torch.sum(m.cdf(0.0) * pi, dim=1)
+#     zero_cdf[torch.isnan(zero_cdf)] = 0.0
+#     result += zero_cdf * 10.0
+#
+#     # factor = 290304000.0
+#     # mu_1 = torch.narrow(mu, 1, 0, 1)
+#     # mask_1 = torch.where((math.exp(5.0) / factor) > mu_1, mu_1, torch.zeros(mu_1.size()[0], mu_1.size()[1]).cuda())
+#     # mask_1 = torch.nonzero(mask_1)
+#     # mask_2 = ((math.exp(10.0) / factor) > mu[:, 1]) & (mu[:, 1] > (math.exp(5.0) / factor))
+#     # mask_3 = ((math.exp(15.0) / factor) > mu[:, 2]) & (mu[:, 2] > (math.exp(10.0) / factor))
+#     # mask_4 = mu[:, 3] > (math.exp(15.0) / factor)
+#     #
+#     # mask_1 = torch.abs(torch.sum(mask_1, dim=1, dtype=torch.float) - 1)
+#     # mask_2 = torch.abs(torch.sum(mask_2, dim=0, dtype=torch.float) - 1)
+#     # mask_3 = torch.abs(torch.sum(mask_3, dim=0, dtype=torch.float) - 1)
+#     # mask_4 = torch.abs(torch.sum(mask_4, dim=0, dtype=torch.float) - 1)
+#
+#     # print(torch.mean(zero_cdf * 10.0))
+#     # print(torch.mean(mask_1))
+#     # print(torch.mean(mask_2))
+#     # print(torch.mean(mask_3))
+#     # print(torch.mean(mask_4))
+#
+#     return torch.mean(result)
 
 
 def main():
@@ -1461,6 +1477,7 @@ def main():
                 tr_loss += loss.item()
                 middle_loss += loss.item()
                 if step % 100 == 0:
+                    print("lr: " + str(optimizer.param_groups[0]['lr']))
                     print("Loss: " + str(middle_loss))
                     middle_loss = 0.0
                 nb_tr_examples += input_ids.size(0)
@@ -1480,7 +1497,9 @@ def main():
                     if args.fp16:
                         # modify learning rate with special warm up BERT uses
                         # if args.fp16 is False, BertAdam is used that handles this automatically
-                        lr_this_step = args.learning_rate * warmup_linear(global_step/num_train_optimization_steps, args.warmup_proportion)
+                        lr_this_step = args.learning_rate / (1.1 ** (global_step / 800.0))
+                        print("Changing Learning Rate: " + str(lr_this_step))
+                        # lr_this_step = args.learning_rate * warmup_linear(global_step/num_train_optimization_steps, args.warmup_proportion)
                         for param_group in optimizer.param_groups:
                             param_group['lr'] = lr_this_step
                     optimizer.step()

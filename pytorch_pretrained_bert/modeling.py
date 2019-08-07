@@ -409,7 +409,7 @@ class BertEncoderPredicate(nn.Module):
     def __init__(self, config):
         super(BertEncoderPredicate, self).__init__()
         layer = BertLayer(config)
-        self.layer = nn.ModuleList([copy.deepcopy(layer) for _ in range(6)])
+        self.layer = nn.ModuleList([copy.deepcopy(layer) for _ in range(4)])
 
     def forward(self, hidden_states, attention_mask):
         extended_attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
@@ -999,6 +999,33 @@ class BertForSequenceClassification(BertPreTrainedModel):
             return logits
 
 
+class BertForSingleTokenClassification(BertPreTrainedModel):
+    def __init__(self, config, num_labels):
+        super(BertForSingleTokenClassification, self).__init__(config)
+        self.num_labels = num_labels
+        self.bert = BertModel(config)
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+        self.classifier = nn.Linear(config.hidden_size, num_labels)
+        self.apply(self.init_bert_weights)
+        self.log_softmax = nn.LogSoftmax(-1)
+        self.softmax = nn.Softmax(-1)
+
+    def forward(self, input_ids, token_type_ids=None, attention_mask=None, labels=None, target_ids=None):
+        seq_output, _ = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False)
+        target_all_output = seq_output.gather(1, target_ids.view(-1, 1).unsqueeze(2).repeat(1, 1, seq_output.size(2)))
+        pooled_output = self.dropout(target_all_output)
+        logits = self.classifier(pooled_output)
+        logits = self.log_softmax(logits)
+
+        if labels is not None:
+            # loss_fct = CrossEntropyLoss()
+            # loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
+            # return loss
+            return logits
+        else:
+            return logits
+
+
 class BertForTemporalClassification(BertPreTrainedModel):
     """BERT model for classification.
     This module is composed of the BERT model with a linear layer on top of
@@ -1101,11 +1128,14 @@ class BertForTemporalClassification(BertPreTrainedModel):
         states = self.dropout(states)
 
         pi = nn.functional.softmax(self.pi_classifier(states), -1)
-        mu = nn.functional.sigmoid(self.mu_classifier(states)).view(-1, self.n_gussians)
+        mu = self.mu_classifier(states).view(-1, self.n_gussians)
+        sigma = torch.exp(self.sigma_classifier(states))
+        # mu = nn.functional.sigmoid(self.mu_classifier(states)).view(-1, self.n_gussians)
+        # sigma = nn.functional.sigmoid(self.sigma_classifier(states))
+
         # mu = mu * self.mu_weight.repeat(mu.size()[0], 1)
         # mu = mu + self.mu_bias.repeat(mu.size()[0], 1)
         # sigma = torch.mul(nn.functional.sigmoid(self.sigma_classifier(states)).view(-1, self.n_gussians), 0.5) * mu
-        sigma = nn.functional.sigmoid(self.sigma_classifier(states))
 
         if labels is not None:
             """NOT IN USE"""

@@ -706,7 +706,7 @@ class SRLRunner:
         lines = [x.strip() for x in open("samples/duration/duration_srl_succeed.jsonl").readlines()]
         reader = jsonlines.Reader(lines)
 
-        f_out = open("samples/duration/verb_formatted_all_svo_better_filter_4.txt", "w")
+        f_out = open("samples/duration/verb_formatted_all_svo_better_filter_5.txt", "w")
         for obj in reader:
             tokens = obj["TOKENS"]
             sentence = ' '.join(tokens)
@@ -724,7 +724,8 @@ class SRLRunner:
                 if subj_start == -1 and obj_start == -1 and arg3_start == -1:
                     continue
                 for j in range(start, end):
-                    tokens[j] = "[MASK]"
+                    pass
+                    # tokens[j] = "[MASK]"
                 f_out.write(' '.join(tokens) + "\t" + str(verb_pos) + "\t" + obj["TMPVAL"] + "\t"
                             + str(subj_start) + "\t" + str(subj_end) + "\t" + str(obj_start) + "\t" + str(obj_end) +
                             "\t" + str(arg3_start) + "\t" + str(arg3_end) + "\n")
@@ -1222,6 +1223,7 @@ class VerbBaseline:
             "years": 365.0 * 24.0 * 60.0 * 60.0,
             "century": 100.0 * 365.0 * 24.0 * 60.0 * 60.0,
             "centuries": 100.0 * 365.0 * 24.0 * 60.0 * 60.0,
+            "inf": 20.0 * 100.0 * 365.0 * 24.0 * 60.0 * 60.0,
         }
 
     def get_seconds_from_timex(self, timex):
@@ -1416,7 +1418,7 @@ class VerbBaseline:
             return 1
 
     def find_distribution(self):
-        with open("samples/duration/verb_formatted_all_svo_better_filter_non_mask.txt") as f_in:
+        with open("samples/duration/verb_formatted_all_svo_better_filter_4.txt") as f_in:
             lines = [x.strip() for x in f_in.readlines()]
 
         result_map = {}
@@ -1454,6 +1456,80 @@ class VerbBaseline:
 
             f_out.write(key + "\n")
             f_out.write(str(result_map[key]) + "\n")
+
+    def get_timex_from_seconds(self, seconds):
+        prev_unit = "seconds"
+        for i, v in enumerate(self.convert_map):
+            if seconds / self.convert_map[v] < 0.5:
+                break
+            prev_unit = v
+        if prev_unit == "seconds" and seconds > 60.0:
+            prev_unit = "centuries"
+        new_val = str(round(seconds / self.convert_map[prev_unit], 2))
+
+        return new_val + " " + prev_unit
+
+    def find_distribution_raw(self):
+        import math
+        with open("samples/duration/verb_formatted_all_svo_better_filter_4.txt") as f_in:
+            lines = [x.strip() for x in f_in.readlines()]
+
+        result_map = {}
+        cared_verb = {
+            "attack": ["attack", "attacked", "attacking", "attacks"],
+            "meet": ["meet", "met", "meeting", "meets"],
+            "run": ["run", "ran", "running", "runs"],
+            "pay": ["pay", "paid", "paying", "pays"],
+            "learn": ["learn", "learns", "learned", "learnt"],
+            "watch": ["watch", "watched", "watching", "watches"],
+            "grow": ["grow", "grew", "growing", "grows"],
+            "walk": ["walk", "walked", "walking", "walks"],
+            "consider": ["consider", "considers", "considering", "considered"],
+            "buy": ["buys", "buy", "bought", "buying"],
+            "kill": ["kills", "kill", "killed", "killing"],
+            "ask": ["asks", "ask", "asking", "asked"],
+            "call": ["calls", "call", "called", "calling"],
+                      }
+        for k in cared_verb:
+            result_map[k] = []
+        result_map["all"] = []
+        for line in lines:
+            groups = line.split("\t")
+            tokens = groups[0].split()
+            verb = tokens[int(groups[1])].lower()
+            norm_key = ""
+            for key in cared_verb:
+                if verb in cared_verb[key]:
+                    norm_key = key
+            norm_key = "all"
+            if norm_key == "":
+                continue
+            val = float(groups[2].split()[0]) * float(self.convert_map[groups[2].split()[1]])
+            if val <= 0:
+                continue
+            result_map[norm_key].append(
+                val
+                # math.log(val)
+            )
+        for key in result_map:
+            plt.subplots(4, 2, figsize=(60, 30))
+            for j, max_unit in enumerate(["hours", "days", "weeks", "months", "years", "centuries", "inf"]):
+                max_val = self.convert_map[max_unit]
+                # max_val_log = math.log(max_val)
+                max_val_log = max_val
+                print(key)
+                print(max_unit)
+                bin_count = 20
+                plt.subplot(4, 2, j + 1)
+                n, bins, patches = plt.hist(np.array(result_map[key]), bins=bin_count, range=(0, max_val_log))
+                interval = max_val_log / float(bin_count)
+                labels = []
+                for i in range(bin_count + 1):
+                    cur_val = interval * float(i)
+                    labels.append(self.get_timex_from_seconds(cur_val))
+                plt.xticks(bins, labels)
+                plt.title(key + ", " + max_unit + ", " + "log")
+            plt.savefig("figures/" + key + "_" + max_unit + "_log.png")
 
     def test_file(self, map_path, path):
         with open(map_path, "rb") as f_in:
@@ -1936,7 +2012,7 @@ if __name__ == "__main__":
     # srl = AllenSRL()
     # srl.predict_file("samples/duration_afp_eng_filtered.txt")
 
-    runner = SRLRunner()
+    # runner = SRLRunner()
     # runner.eval_temporal()
     # runner.count_label("samples/duration/verb_formatted_all_svo.txt")
     # runner.prepare_timebank_srl()
@@ -1946,8 +2022,8 @@ if __name__ == "__main__":
     # runner.parse_srl_file("samples/duration_srl_verbs_3.jsonl")
     # runner.parse_srl_file("samples/duration/verb_nyt_svo.jsonl")
     # runner.prepare_verb_file()
-    runner.prepare_simple_verb_file()
-    # runner.remove_dups("samples/duration/verb_formatted_all_svo_better_filter_4.txt", "samples/duration/verb_formatted_all_svo_better_filter_4.txt")
+    # runner.prepare_simple_verb_file()
+    # runner.remove_dups("samples/duration/verb_formatted_all_svo_better_filter_5.txt", "samples/duration/verb_formatted_all_svo_better_filter_5.txt")
     # runner.produce_simple_sents("samples/duration/verb_formatted_all_svo_better_filter_4.txt", "samples/duration/verb_formatted_all_simple.txt")
     # runner.prepare_verb_file_for_failures()
     # runner.print_random_srl_json()
@@ -1959,7 +2035,8 @@ if __name__ == "__main__":
     # extractor.get_rid_of_masks("samples/duration/verb_formatted_all_svo_better_filter_4.txt", "samples/duration/verb_formatted_all_svo_better_filter_4.txt")
     # extractor.get_rid_of_masks("samples/duration/all/nominals_formatted.txt", "samples/duration/all/nominals_formatted_train.txt")
 
-    # baseline = VerbBaseline("samples/duration/all/verbs.txt")
+    baseline = VerbBaseline("samples/duration/all/verbs.txt")
+    baseline.find_distribution_raw()
     # baseline.process("samples/duration/all/nearest_verb_cont/partition_")
     # VerbBaseline.merge_map("samples/duration/all/nearest_verb_all/partition_", "samples/duration/all/nearest_verb.pkl")
     # VerbBaseline.exp_output("samples/duration/all/nearest_verb.pkl", "work")

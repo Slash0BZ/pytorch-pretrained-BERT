@@ -341,7 +341,7 @@ class DataReader:
                 if t.lower() in self.duration_keys and i != 0 and self.quantity(tokens[i - 1]) is not None:
                     if t.lower() == "century" or t.lower() == "centuries":
                         continue
-                    if random.random() < 0.005:
+                    if random.random() < 0.01:
                         ret.append((tokens, i))
         return ret
 
@@ -361,6 +361,7 @@ class DataReader:
                     int(line.split("\t")[7]),
                     int(line.split("\t")[8]),
                     line.split("\t")[2],
+                    line
                 ))
         return ret
 
@@ -526,6 +527,7 @@ class Evaluator:
 def train_and_eval_bert():
     BLM = BERT_LM_predictions()
     data = DataReader("samples/duration/verb_formatted_all_svo_better_filter_non_mask.txt")
+    # data = DataReader("samples/UD_English/test/formatted.txt")
     results = []
     count = 0
     for tokens, pos in data.get():
@@ -557,11 +559,47 @@ def train_and_eval_bert():
     evaluator.print_results()
 
 
+def train_and_eval_bert_on_udst():
+    BLM = BERT_LM_predictions()
+    data = DataReader("samples/UD_English/test.formatted.txt")
+    results = []
+    count = 0
+    for sentence, verb_pos, _, _, _, _, _, _, label, _ in data.get_formatted():
+        gold = label.split(" ")[1]
+        if gold in ["instantaneous", "decades", "centuries", "forever"]:
+            continue
+        tokens = sentence.split()
+        new_tokens = []
+        for t in tokens[:-1]:
+            new_tokens.append(t)
+        new_tokens.append("for")
+        new_tokens.append("one")
+        new_tokens.append("[MASK]")
+        new_tokens.append(tokens[-1])
+        tokens = new_tokens
+        ps = BLM.calculate_bert_masked_per_token(tokens)[0][len(new_tokens) - 2]
+        selected_p = '404'
+        for p in ps:
+            predicted_token = p[0]
+            if predicted_token in data.duration_keys:
+                selected_p = predicted_token
+                break
+        results.append([tokens, gold, selected_p, ps])
+        count += 1
+        if count % 1000 == 0:
+            print(count)
+    pickle.dump(results, open("unit_exp_output.pkl", "wb"))
+
+    evaluator = Evaluator("unit_exp_output.pkl")
+    evaluator.print_results()
+
+
 def train_and_eval():
     annotator = Annotator("models/models_log_44")
-    # data = DataReader("samples/duration/verb_formatted_all_svo_better_filter_4.txt")
-    data = DataReader("samples/UD_English/test.formatted.txt")
+    data = DataReader("samples/duration/verb_formatted_all_svo_better_filter_4.txt")
+    # data = DataReader("samples/UD_English/test.formatted.txt")
     evaluator = Evaluator("unit_exp_output.pkl")
+    f_out = open("filtered_results.txt", "w")
     duration_keys_ordered = [
         "seconds",
         "minutes",
@@ -579,6 +617,15 @@ def train_and_eval():
         "weeks": 0,
         "months": 0,
         "years": 0,
+    }
+    id_map = {
+        "seconds": 0,
+        "minutes": 1,
+        "hours": 2,
+        "days": 3,
+        "weeks": 4,
+        "months": 5,
+        "years": 6,
     }
     mpr_map = {
         "seconds": 0.0,
@@ -605,14 +652,35 @@ def train_and_eval():
     td = 0.0
     sampled_data = data.get_formatted()
     counter = 0
-    for (a, b, c, d, e, f, g, h, timex) in sampled_data:
+    invalid_counter = 0
+    for (a, b, c, d, e, f, g, h, timex, line) in sampled_data:
         if len(a.split()) > 100:
             continue
         rets = annotator.annotate(a, b, c, d, e, f, g, h)
+
         val = data.quantity(timex.split(" ")[0])
         gold = timex.split(" ")[1]
         gold, new_num = data.normalize_timex(val, gold)
         gold = evaluator.get_true_name(gold)
+        if gold == "centuries":
+            continue
+
+        label_id = id_map[gold]
+        below_sum = 0.0
+        for i in range(0, label_id):
+            below_sum += rets[i]
+        tokens = a.split()
+        tokens[b] = "[" + tokens[b] + "]"
+        # if rets[label_id] < 0.5:
+        if below_sum > 0.3 and rets[label_id] < 0.3:
+            invalid_counter += 1
+        else:
+            f_out.write(line + "\n")
+        # print(" ".join(tokens))
+        # print(timex)
+        # print(below_sum)
+        # print(rets[label_id])
+        # print("================")
 
         unit_prob_map = {}
         for i, key in enumerate(duration_keys_ordered):
@@ -622,7 +690,6 @@ def train_and_eval():
             ksum += unit_prob_map[key]
         for key in unit_prob_map:
             unit_prob_map[key] = unit_prob_map[key] / ksum
-
         unit_map = sorted(unit_prob_map.items(), key=lambda x: x[1], reverse=True)
         for i, (p, s) in enumerate(unit_map):
             if i == 0 and p == gold:
@@ -641,7 +708,6 @@ def train_and_eval():
         counter += 1
         if counter % 100 == 0:
             print(counter)
-
     print("Accuracy: " + str(hard_correct / float(len(sampled_data))))
     print("Prob Rank: " + str(mpr / float(len(sampled_data))))
     print("Mean Rank: " + str(mr / float(len(sampled_data))))
@@ -672,7 +738,7 @@ def eval_bert_custom():
     }
     evaluator = Evaluator("unit_exp_output.pkl")
     duration_keys_ordered = [
-        "instantaneous",
+        # "instantaneous",
         "seconds",
         "minutes",
         "hours",
@@ -680,10 +746,28 @@ def eval_bert_custom():
         "weeks",
         "months",
         "years",
-        "decades",
-        "centuries",
-        "forever",
+        # "decades",
+        # "centuries",
+        # "forever",
     ]
+    hard_coded_prediction_a = {
+        "seconds": 0.01016,
+        "minutes": 0.05843,
+        "hours": 0.05700,
+        "days": 0.06956,
+        "weeks": 0.08648,
+        "months": 0.1471,
+        "years": 0.5712,
+    }
+    hard_coded_prediction_b = {
+        "seconds": 0.08469,
+        "minutes": 0.31640,
+        "hours": 0.11630,
+        "days": 0.12884,
+        "weeks": 0.08407,
+        "months": 0.13334,
+        "years": 0.133633,
+    }
     mr_map = {
         "instantaneous": 0,
         "seconds": 0,
@@ -749,6 +833,7 @@ def eval_bert_custom():
     print(len(new_lines))
     for i, line in enumerate(new_lines):
         gold = reader.normalize_timex(float(line.split("\t")[2].split()[0]), line.split("\t")[2].split()[1])[0]
+        # gold = line.split("\t")[2].split()[1]
         unit_prob_map = {}
         for ii, key in enumerate(duration_keys_ordered):
             if key in ["instantaneous", "decades", "centuries", "forever"]:
@@ -759,7 +844,13 @@ def eval_bert_custom():
             ksum += math.exp(float(unit_prob_map[key]))
         for key in unit_prob_map:
             unit_prob_map[key] = math.exp(float(unit_prob_map[key])) / ksum
+            pass
+        # unit_prob_map = hard_coded_prediction_b
 
+        a_sum = 0.0
+        for k in unit_prob_map:
+            a_sum += unit_prob_map[k]
+        assert 0.99 < a_sum < 1.01
         unit_map = sorted(unit_prob_map.items(), key=lambda x: x[1], reverse=True)
         for i, (p, s) in enumerate(unit_map):
             if i == 0 and p == gold:
@@ -776,11 +867,11 @@ def eval_bert_custom():
                 mpr_map[gold] += s
                 mr_count[gold] += 1
         counter += 1
-    print("Accuracy: " + str(hard_correct / float(len(prediction_lines))))
-    print("Prob Rank: " + str(mpr / float(len(prediction_lines))))
-    print("Mean Rank: " + str(mr / float(len(prediction_lines))))
-    print("Reciprocal Rank: " + str(mrr / float(len(prediction_lines))))
-    print("Mean Distance: " + str(td / float(len(prediction_lines))))
+    print("Accuracy: " + str(hard_correct / float(len(new_lines))))
+    print("Prob Rank: " + str(mpr / float(len(new_lines))))
+    print("Mean Rank: " + str(mr / float(len(new_lines))))
+    print("Reciprocal Rank: " + str(mrr / float(len(new_lines))))
+    print("Mean Distance: " + str(td / float(len(new_lines))))
 
     for key in mr_count:
         print(key + ": " + str(float(mr_map[key] / float(mr_count[key]))))
@@ -790,8 +881,37 @@ def eval_bert_custom():
         print(key + ": " + str(float(mpr_map[key] / float(mr_count[key]))))
 
 
+def convert_prob_file(input_file, reference_file, output_file):
+    prob_lines = [x.strip() for x in open(input_file).readlines()]
+    ref_lines = [x.strip() for x in open(reference_file).readlines()]
+    ref_lines_new = []
+    for l in ref_lines:
+        if len(l.split("\t")[0].split()) > 120:
+            continue
+        gold = l.split("\t")[2].split()[1].lower()
+        val = float(l.split("\t")[2].split()[0])
+        if val < 1.0:
+            continue
+        if gold in ["instantaneous", "decades", "centuries", "forever"]:
+            continue
+        ref_lines_new.append(l)
+    ref_lines = ref_lines_new
+    assert(len(ref_lines) == len(prob_lines))
+    f = open(output_file, "w")
+    for i in range(0, len(prob_lines)):
+        tokens = ref_lines[i].split("\t")[0].split()
+        pos = int(ref_lines[i].split("\t")[1])
+        tokens[pos] = "[" + tokens[pos] + "]"
+        probs = [math.exp(float(x)) for x in prob_lines[i].split("\t")]
+        sum = 0.0
+        for p in probs:
+            sum += p
+        probs = [x / sum for x in probs]
+        f.write(" ".join(tokens) + "\t" + "\t".join([str(x) for x in probs]) + "\n")
 
-
+# train_and_eval()
 # reader = UDReader("samples/UD_English")
 # reader.save_to_file("samples/UD_English")
 eval_bert_custom()
+# train_and_eval_bert_on_udst()
+# convert_prob_file("bert_logits.txt", "samples/UD_English/test.formatted.txt", "bert_probs_noweight.txt")

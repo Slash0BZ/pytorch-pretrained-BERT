@@ -49,7 +49,8 @@ logger = logging.getLogger(__name__)
 class InputExample(object):
     """A single training/test example for simple sequence classification."""
 
-    def __init__(self, guid, text_a, text_b=None, label=None, target_idx=0, tolerance=1, subj_mask=None, obj_mask=None, arg3_mask=None, adjustment=1.0):
+    def __init__(self, guid, text_a, text_b=None, label=None, target_idx=0, tolerance=1, subj_mask=None, obj_mask=None,
+                 arg3_mask=None, adjustment=1.0, longer_target_idx=None):
         """Constructs a InputExample.
 
         Args:
@@ -71,12 +72,14 @@ class InputExample(object):
         self.obj_mask = obj_mask
         self.arg3_mask = arg3_mask
         self.adjustment = adjustment
+        self.longer_target_idx = longer_target_idx
 
 
 class InputFeatures(object):
     """A single set of features of data."""
 
-    def __init__(self, input_ids, input_mask, segment_ids, label_id, target_idx=0, tolerance=3, subj_mask=None, obj_mask=None, arg3_mask=None, adjustment=1.0):
+    def __init__(self, input_ids, input_mask, segment_ids, label_id, target_idx=0, tolerance=3, subj_mask=None,
+                 obj_mask=None, arg3_mask=None, adjustment=1.0, soft_target=None, longer_target_idx=None):
         self.input_ids = input_ids
         self.input_mask = input_mask
         self.segment_ids = segment_ids
@@ -87,6 +90,8 @@ class InputFeatures(object):
         self.obj_mask = obj_mask
         self.arg3_mask = arg3_mask
         self.adjustment = adjustment
+        self.soft_target = soft_target
+        self.longer_target_idx = longer_target_idx
 
 
 class DataProcessor(object):
@@ -168,6 +173,9 @@ class TemporalVerbProcessor(DataProcessor):
         return u
 
     def normalize_timex(self, v_input, u):
+        if u in ["instantaneous", "decades", "forever"]:
+            return u, str(1)
+
         convert_map = {
             "seconds": 1.0,
             "minutes": 60.0,
@@ -200,19 +208,40 @@ class TemporalVerbProcessor(DataProcessor):
             text_a = groups[0]
             if len(text_a.split()) > 120:
                 continue
-            target_idx = int(groups[1])
-            label_raw = groups[2]
-            label_num = float(label_raw.split(" ")[0])
-            if label_num < 1.0:
-                continue
-            label = label_raw.split(" ")[1].lower()
-            # label = self.normalize_timex(label_num, label)[0]
-            if label in ["instantaneous", "decades", "centuries", "forever"]:
-                continue
-            examples.append(
-                InputExample(
-                    guid=guid, text_a=text_a, label=label, target_idx=target_idx
-                ))
+            if " " not in groups:
+                target_idx = int(groups[1])
+                longer_target_idx = int(groups[2])
+                examples.append(
+                    InputExample(
+                        guid=guid, text_a=text_a, target_idx=target_idx, longer_target_idx=longer_target_idx
+                    ))
+            else:
+                target_idx = int(groups[1])
+                label_raw = groups[2]
+                label_num = float(label_raw.split(" ")[0])
+                if label_num < 1.0:
+                    continue
+                label = label_raw.split(" ")[1].lower()
+                label = self.normalize_timex(label_num, label)[0]
+                if label in ["instantaneous", "decades", "centuries", "forever"]:
+                    continue
+                examples.append(
+                    InputExample(
+                        guid=guid, text_a=text_a, label=label, target_idx=target_idx
+                    ))
+        # label_count = {
+        #     "seconds": 0,
+        #     "minutes": 0,
+        #     "hours": 0,
+        #     "days": 0,
+        #     "weeks": 0,
+        #     "months": 0,
+        #     "years": 0,
+        # }
+        # for e in examples:
+        #     label_count[e.label] += 1
+        # print(label_count)
+
         return examples
 
 
@@ -283,7 +312,10 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
         assert len(segment_ids) == max_seq_length
 
         if output_mode == "classification":
-            label_id = label_map[example.label]
+            if example.label is not None:
+                label_id = label_map[example.label]
+            else:
+                label_id = -1
         elif output_mode == "regression":
             label_id = float(example.label)
         else:
@@ -299,13 +331,75 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
             logger.info(
                     "segment_ids: %s" % " ".join([str(x) for x in segment_ids]))
             logger.info("label: %s (id = %d)" % (example.label, label_id))
+            logger.info("target: %s" % str(example.target_idx + 1))
+
+        soft_labels = [0.0] * len(label_list)
+        if len(label_list) - 2 > label_id > 1:
+            soft_labels[label_id] = 0.682
+            soft_labels[label_id + 1] = 0.157
+            soft_labels[label_id - 1] = 0.157
+            soft_labels[label_id + 2] = 0.052
+            soft_labels[label_id - 2] = 0.052
+        elif label_id == 1:
+            soft_labels[label_id] = 0.682
+            soft_labels[label_id - 1] = 0.157
+            soft_labels[label_id + 1] = 0.157
+            soft_labels[label_id + 2] = 0.052
+        elif label_id == len(label_list) - 2:
+            soft_labels[label_id] = 0.682
+            soft_labels[label_id + 1] = 0.157
+            soft_labels[label_id - 1] = 0.157
+            soft_labels[label_id - 2] = 0.052
+        elif label_id == 0:
+            soft_labels[label_id] = 0.682
+            soft_labels[label_id + 1] = 0.157
+            soft_labels[label_id + 2] = 0.052
+        elif label_id == len(label_list) - 1:
+            soft_labels[label_id] = 0.682
+            soft_labels[label_id - 1] = 0.157
+            soft_labels[label_id - 2] = 0.052
+        elif label_id == -1:
+            pass
+        else:
+            print("ERROR: Impossible condition reached.")
+
+        adjustment = 1.0
+        # if label_id == 1:
+        #     adjustment = 0.173
+        # if label_id == 2:
+        #     adjustment = 0.178
+        # if label_id == 3:
+        #     adjustment = 0.146
+        # if label_id == 4:
+        #     adjustment = 0.117
+        # if label_id == 5:
+        #     adjustment = 0.069
+        # if label_id == 6:
+        #     adjustment = 0.018
+        if label_id == 0:
+            adjustment = 0.617
+        if label_id == 1:
+            adjustment = 0.165
+        if label_id == 2:
+            adjustment = 0.449
+        if label_id == 3:
+            adjustment = 0.405
+        if label_id == 4:
+            adjustment = 0.621
+        if label_id == 5:
+            adjustment = 0.392
+        if label_id == 6:
+            adjustment = 0.383
 
         features.append(
                 InputFeatures(input_ids=input_ids,
                               input_mask=input_mask,
                               segment_ids=segment_ids,
                               label_id=label_id,
-                              target_idx=example.target_idx + 1))
+                              target_idx=example.target_idx + 1,
+                              adjustment=adjustment,
+                              soft_target=soft_labels,
+                              ))
     return features
 
 
@@ -357,6 +451,18 @@ def weighted_mse_loss(logits, target):
     loss = torch.sum(loss, dim=1)
     loss = torch.mean(loss)
     return loss
+
+
+def soft_cross_entropy_loss(logits, soft_target, adjustments=None):
+    loss = -soft_target * nn.functional.log_softmax(logits, -1)
+    # weight_vec = torch.FloatTensor([0.617, 0.165, 0.449, 0.405, 0.621, 0.391, 0.383]).repeat(loss.size(0), 1).cuda()
+    # loss = torch.mul(loss, weight_vec)
+    # print(loss.size())
+    # print(adjustments.size())
+    loss = torch.sum(loss, -1)
+    # loss = torch.mul(loss, adjustments)
+    mean_loss = loss.mean()
+    return mean_loss
 
 
 def main():
@@ -584,6 +690,8 @@ def main():
         all_input_mask = torch.tensor([f.input_mask for f in train_features], dtype=torch.long)
         all_segment_ids = torch.tensor([f.segment_ids for f in train_features], dtype=torch.long)
         all_target_idxs = torch.tensor([f.target_idx for f in train_features], dtype=torch.long)
+        all_soft_targets = torch.tensor([f.soft_target for f in train_features], dtype=torch.float)
+        all_adjustments = torch.tensor([f.adjustment for f in train_features], dtype=torch.float)
 
         if output_mode == "classification":
             all_label_ids = torch.tensor([f.label_id for f in train_features], dtype=torch.long)
@@ -591,7 +699,7 @@ def main():
             all_label_ids = torch.tensor([f.label_id for f in train_features], dtype=torch.float)
 
         train_data = TensorDataset(
-            all_input_ids, all_input_mask, all_segment_ids, all_label_ids, all_target_idxs
+            all_input_ids, all_input_mask, all_segment_ids, all_label_ids, all_target_idxs, all_soft_targets, all_adjustments
         )
         if args.local_rank == -1:
             train_sampler = RandomSampler(train_data)
@@ -606,7 +714,7 @@ def main():
             middle_loss = 0.0
             for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration")):
                 batch = tuple(t.to(device) for t in batch)
-                input_ids, input_mask, segment_ids, label_ids, target_idxs = batch
+                input_ids, input_mask, segment_ids, label_ids, target_idxs, soft_targets, adjustments = batch
 
                 # define a new function to compute loss values for both output_modes
                 logits = model(
@@ -616,7 +724,8 @@ def main():
                 if output_mode == "classification":
                     # loss_fn = CrossEntropyLoss()
                     # loss = loss_fn(logits.view(-1, num_labels), label_ids.view(-1))
-                    loss = weighted_mse_loss(logits.view(-1, num_labels), label_ids.view(-1))
+                    # loss = weighted_mse_loss(logits.view(-1, num_labels), label_ids.view(-1))
+                    loss = soft_cross_entropy_loss(logits.view(-1, num_labels), soft_targets, adjustments)
                 elif output_mode == "regression":
                     label_ids = label_ids.unsqueeze(1)
                     loss = None
@@ -636,7 +745,6 @@ def main():
                 tr_loss += loss.item()
                 middle_loss += loss.item()
                 if step % 100 == 0:
-                    print("lr: " + str(optimizer.param_groups[0]['lr']))
                     print("Loss: " + str(middle_loss))
                     middle_loss = 0.0
                 nb_tr_examples += input_ids.size(0)
@@ -656,7 +764,8 @@ def main():
                     if args.fp16:
                         # modify learning rate with special warm up BERT uses
                         # if args.fp16 is False, BertAdam is used that handles this automatically
-                        lr_this_step = args.learning_rate / (1.1 ** (global_step / 800.0))
+                        lr_this_step = args.learning_rate * warmup_linear(global_step / num_train_optimization_steps,
+                                                                          args.warmup_proportion)
                         print("Changing Learning Rate: " + str(lr_this_step))
                         lr_this_step = args.learning_rate * warmup_linear(global_step/num_train_optimization_steps, args.warmup_proportion)
                         for param_group in optimizer.param_groups:

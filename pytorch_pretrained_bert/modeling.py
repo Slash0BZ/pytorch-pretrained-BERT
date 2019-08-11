@@ -1004,6 +1004,7 @@ class BertForSingleTokenClassification(BertPreTrainedModel):
         super(BertForSingleTokenClassification, self).__init__(config)
         self.num_labels = num_labels
         self.bert = BertModel(config)
+        # self.all_attention = BertEncoderPredicate(config)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
         self.classifier = nn.Linear(config.hidden_size, num_labels)
         self.apply(self.init_bert_weights)
@@ -1012,10 +1013,11 @@ class BertForSingleTokenClassification(BertPreTrainedModel):
 
     def forward(self, input_ids, token_type_ids=None, attention_mask=None, labels=None, target_ids=None):
         seq_output, _ = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False)
+        # all_output = self.all_attention(seq_output, attention_mask)
         target_all_output = seq_output.gather(1, target_ids.view(-1, 1).unsqueeze(2).repeat(1, 1, seq_output.size(2)))
         pooled_output = self.dropout(target_all_output)
         logits = self.classifier(pooled_output)
-        logits = self.log_softmax(logits)
+        # logits = self.log_softmax(logits)
 
         if labels is not None:
             # loss_fct = CrossEntropyLoss()

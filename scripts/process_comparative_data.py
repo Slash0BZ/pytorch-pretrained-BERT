@@ -168,6 +168,27 @@ class SentenceProcessor:
             cur_list.append(tokens[i])
         return ret
 
+    def get_all_related_tokens_with_verb_pos(self, tokens, tags, exclude_tmp=True):
+        continued_count = 0
+        verb_pos = -1
+        ret_tokens = []
+        for i, t in enumerate(tags):
+            if t == "O":
+                continued_count += 1
+                continue
+            elif t == "B-V":
+                verb_pos = i - continued_count
+                ret_tokens.append(tokens[i])
+            elif t in ["B-ARGM-TMP", "I-ARGM-TMP"]:
+                if exclude_tmp:
+                    continued_count += 1
+                    continue
+                else:
+                    ret_tokens.append(tokens[i])
+            else:
+                ret_tokens.append(tokens[i])
+        return ret_tokens, verb_pos
+
     def get_tmp_range(self, tags):
         start = -1
         end = -1
@@ -229,12 +250,85 @@ class SentenceProcessor:
             if short_event_verb > -1 and long_event_verb > -1:
                 f_out.write(" ".join(obj["words"]) + "\t" + str(short_event_verb) + "\t" + str(long_event_verb) + "\n")
 
+    def format_srl_file_simplified_pair(self, path, out_path):
+        lines = [x.strip() for x in open(path).readlines()]
+        reader = jsonlines.Reader(lines)
+        f_out = open(out_path, "w")
+
+        for obj in reader:
+            tmp_range = [-1, -1]
+            short_event_verb = -1
+            long_event_verb = -1
+            short_event_tokens = []
+            long_event_tokens = []
+            for verbs_obj in obj['verbs']:
+                tokens = obj['words']
+                tags = verbs_obj['tags']
+                parsed = self.parse_single_seq(tokens, tags)
+                if "ARGMTMP" in parsed:
+                    tmp_arg = parsed["ARGMTMP"]
+                    for i, v in enumerate(tmp_arg):
+                        if v.lower() in ["while"]:
+                            tmp_range = self.get_tmp_range(tags)
+                            short_event_tokens, short_event_verb = self.get_all_related_tokens_with_verb_pos(tokens, tags)
+                            break
+                if tmp_range[0] <= self.get_verb_position(tags) < tmp_range[1]:
+                    long_event_tokens, long_event_verb = self.get_all_related_tokens_with_verb_pos(tokens, tags)
+                    if len(long_event_tokens) < 3:
+                        long_event_verb = -1
+                        long_event_tokens = []
+                    else:
+                        break
+            if short_event_verb > -1 and long_event_verb > -1:
+                f_out.write(" ".join(short_event_tokens) + "\t" + str(short_event_verb) + "\t" + "NONE\t" +
+                            " ".join(long_event_tokens) + "\t" + str(long_event_verb) + "\tNONE\n")
+
+    def combine_abs_comp(self, abs_path, comp_path, out_path):
+        lines = [x.strip() for x in open(abs_path).readlines()]
+        f_out = open(out_path, "w")
+        for i in range(0, len(lines) - 1):
+            f_out.write("\t".join(lines[i].split("\t")[:3]) + "\t" + "\t".join(lines[i + 1].split("\t")[:3]) + "\tNONE\n")
+        lines = [x.strip() for x in open(comp_path).readlines()]
+        for line in lines:
+            r = random.random()
+            groups = line.split("\t")
+            if r < 0.5:
+                f_out.write(line + "\tLESS\n")
+            else:
+                f_out.write("\t".join(groups[3:6]) + "\t" + "\t".join(groups[:3]) + "\tMORE\n")
+
+    def randomize_file(self, path, out_path):
+        lines = [x.strip() for x in open(path).readlines()]
+        random.shuffle(lines)
+        f_out = open(out_path, "w")
+        for l in lines:
+            f_out.write(l + "\n")
+
+    def print_readable_files(self, path, out_path):
+        lines = [x.strip() for x in open(path).readlines()]
+        f_out = open(out_path, "w")
+        for l in lines:
+            tokens = l.split("\t")[0].split()
+            verb = int(l.split("\t")[1])
+            label = l.split("\t")[2]
+            tokens[verb] = "[" + tokens[verb] + "]"
+            f_out.write(" ".join(tokens) + "\t" + label + "\n")
 
 # g = GigawordExtractor()
 # g.process_path("/Volumes/SSD/gigaword/data/afp_eng", "samples/comparative_afp_eng.txt")
 
 processor = SentenceProcessor()
-processor.format_srl_file("samples/comparative_afp_eng_while_srl_valid.jsonl", "samples/comparative_afp_eng_while_srl_formatted.txt")
+processor.format_srl_file_simplified_pair("samples/comparative_afp_eng_while_srl_valid.jsonl", "samples/comparative_afp_eng_while_srl_simplied_pairs.txt")
+processor.combine_abs_comp(
+    "samples/UD_English_finetune_comparative/train.original.formatted.txt",
+    "samples/comparative_afp_eng_while_srl_simplied_pairs.txt",
+    "samples/UD_English_finetune_comparative/train.pair.formatted.txt",
+)
+processor.randomize_file("samples/UD_English_finetune_comparative/train.pair.formatted.txt","samples/UD_English_finetune_comparative/train.pair.formatted.txt")
+# processor.print_readable_files("samples/UD_English/dev.formatted.txt", "samples/UD_English/dev.readable.txt")
+# processor.randomize_file("samples/UD_English_finetune_comparative/train.formatted.txt", "samples/UD_English_finetune_comparative/train.formatted.txt")
+# processor.randomize_file("samples/UD_English_finetune_comparative/train.original.formatted.txt", "samples/UD_English_finetune_comparative/train.original.formatted.txt")
+# processor.format_srl_file("samples/comparative_afp_eng_while_srl_valid.jsonl", "samples/comparative_afp_eng_while_srl_formatted.txt")
 # processor.parse_srl_file("samples/comparative_afp_eng_while_srl.jsonl", "samples/comparative_afp_eng_while_srl_valid.jsonl")
 # processor.process_document("samples/comparative_afp_eng.txt")
 

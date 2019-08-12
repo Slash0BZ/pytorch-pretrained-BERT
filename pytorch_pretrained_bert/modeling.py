@@ -1011,21 +1011,29 @@ class BertForSingleTokenClassification(BertPreTrainedModel):
         self.log_softmax = nn.LogSoftmax(-1)
         self.softmax = nn.Softmax(-1)
 
-    def forward(self, input_ids, token_type_ids=None, attention_mask=None, labels=None, target_ids=None):
+    def get_single_inference(self, input_ids, token_type_ids, attention_mask, target_ids):
         seq_output, _ = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False)
-        # all_output = self.all_attention(seq_output, attention_mask)
         target_all_output = seq_output.gather(1, target_ids.view(-1, 1).unsqueeze(2).repeat(1, 1, seq_output.size(2)))
         pooled_output = self.dropout(target_all_output)
         logits = self.classifier(pooled_output)
-        # logits = self.log_softmax(logits)
+        return logits
 
-        if labels is not None:
-            # loss_fct = CrossEntropyLoss()
-            # loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
-            # return loss
-            return logits
-        else:
-            return logits
+    def forward(self, input_ids, token_type_ids=None, attention_mask=None, labels=None, target_ids=None, longer_target_ids=None):
+        if longer_target_ids is None:
+            return self.get_single_inference(input_ids, token_type_ids, attention_mask, target_ids)
+        place_holder_indices = (longer_target_ids == -1).nonzero().squeeze()
+        non_place_holder_indices = (longer_target_ids != -1).nonzero().squeeze()
+        longer_target_ids[place_holder_indices] = 0
+
+        real_logits = self.get_single_inference(input_ids, token_type_ids, attention_mask, target_ids)
+        real_logits = self.log_softmax(real_logits)
+        comparative_logits = self.get_single_inference(input_ids, token_type_ids, attention_mask, longer_target_ids)
+        comparative_logits = self.softmax(comparative_logits)
+
+        ret_logits = real_logits.clone()
+        ret_logits[non_place_holder_indices] = torch.exp(ret_logits[non_place_holder_indices]) - comparative_logits[non_place_holder_indices]
+
+        return ret_logits
 
 
 class BertForTemporalClassification(BertPreTrainedModel):

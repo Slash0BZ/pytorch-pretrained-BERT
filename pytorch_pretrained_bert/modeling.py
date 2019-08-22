@@ -26,6 +26,7 @@ import shutil
 import tarfile
 import tempfile
 import sys
+import numpy as np
 from io import open
 
 import torch
@@ -624,6 +625,49 @@ class BertPreTrainedModel(nn.Module):
         for old_key, new_key in zip(old_keys, new_keys):
             state_dict[new_key] = state_dict.pop(old_key)
 
+        # copy_keys = []
+        # orig_keys = []
+        # for key in state_dict.keys():
+        #     if key.startswith("bert"):
+        #         new_key = key.replace("bert", "bert_temporal")
+        #         copy_keys.append(new_key)
+        #         orig_keys.append(key)
+        # for o, n in zip(orig_keys, copy_keys):
+        #     state_dict[n] = copy.deepcopy(state_dict[o])
+        #     # pass
+
+        # copy_keys = []
+        # orig_keys = []
+        # for key in state_dict.keys():
+        #     if key.startswith("bert_temporal"):
+        #         new_key = key.replace("bert_temporal", "bert.bert_temporal")
+        #         copy_keys.append(new_key)
+        #         orig_keys.append(key)
+        #     if key.startswith("pi_classifier"):
+        #         new_key = key.replace("pi_classifier", "bert.pi_classifier")
+        #         copy_keys.append(new_key)
+        #         orig_keys.append(key)
+        #     if key.startswith("mu_classifier"):
+        #         new_key = key.replace("mu_classifier", "bert.mu_classifier")
+        #         copy_keys.append(new_key)
+        #         orig_keys.append(key)
+        #     if key.startswith("sigma_classifier"):
+        #         new_key = key.replace("sigma_classifier", "bert.sigma_classifier")
+        #         copy_keys.append(new_key)
+        #         orig_keys.append(key)
+        # for o, n in zip(orig_keys, copy_keys):
+        #     state_dict[n] = state_dict.pop(o)
+
+        # copy_keys = []
+        # orig_keys = []
+        # for key in state_dict.keys():
+        #     if key.startswith("bert.bert_temporal"):
+        #         new_key = key.replace("bert.bert_temporal", "bert_temporal")
+        #         copy_keys.append(new_key)
+        #         orig_keys.append(key)
+        # for o, n in zip(orig_keys, copy_keys):
+        #      state_dict[n] = state_dict.pop(o)
+
         missing_keys = []
         unexpected_keys = []
         error_msgs = []
@@ -999,6 +1043,117 @@ class BertForSequenceClassification(BertPreTrainedModel):
             return logits
 
 
+class BertForSingleTokenClassificationFollowTemporal(BertPreTrainedModel):
+    def __init__(self, config, num_labels):
+        super(BertForSingleTokenClassificationFollowTemporal, self).__init__(config)
+        self.num_labels = num_labels
+        self.bert_temporal = BertModel(config)
+        self.bert = BertModel(config)
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+        self.apply(self.init_bert_weights)
+        # self.log_softmax = nn.LogSoftmax(-1)
+        # self.softmax = nn.Softmax(-1)
+
+        self.pi_classifier = nn.Linear(config.hidden_size * 1, 4)
+        self.mu_classifier = nn.Linear(config.hidden_size * 1, 4)
+        self.sigma_classifier = nn.Linear(config.hidden_size * 1, 4)
+
+        # self.logit_classifier_1 = nn.Linear(7, 7)
+        # self.logit_classifier_2 = nn.Linear(config.hidden_size, 7)
+        # self.logit_classifier_final = nn.Linear(14, 7)
+
+        # self.mlp_layers = nn.Sequential(
+        #     nn.Linear(8, 8),
+        #     nn.ReLU(),
+        #     nn.Linear(8, 7),
+        # )
+
+        self.rel_classifier = nn.Linear(num_labels * 2, 2)
+
+        self.logit_classifier = nn.Linear(num_labels, num_labels)
+        self.classifier = nn.Linear(config.hidden_size, num_labels)
+
+        self.final_mlp_layers = nn.Sequential(
+            nn.ReLU(),
+            # nn.Linear(num_labels * 2, num_labels),
+            nn.Linear(num_labels * 1, num_labels),
+            nn.ReLU(),
+            nn.Linear(num_labels, num_labels),
+        )
+
+    def get_single_inference(self, input_ids, token_type_ids, attention_mask, target_ids):
+        seq_output, _ = self.bert_temporal(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False)
+        target_all_output = seq_output.gather(1, target_ids.view(-1, 1).unsqueeze(2).repeat(1, 1, seq_output.size(2)))
+        target_all_output = self.dropout(target_all_output)
+
+        orig_seq_output, _ = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False)
+        orig_target_all_output = orig_seq_output.gather(1, target_ids.view(-1, 1).unsqueeze(2).repeat(1, 1, orig_seq_output.size(2)))
+        orig_target_all_output = self.dropout(orig_target_all_output)
+
+        pi = nn.functional.softmax(self.pi_classifier(target_all_output), -1).view(-1, 4)
+        mu = self.mu_classifier(target_all_output).view(-1, 4)
+        sigma = torch.exp(self.sigma_classifier(target_all_output)).view(-1, 4)
+
+        # logits = torch.cat((pi * mu, pi * sigma), -1)
+        # logits = self.mlp_layers(logits).unsqueeze(1)
+
+        # logits = self.logit_classifier(target_all_output)
+        logits_orig = self.classifier(orig_target_all_output)
+
+        # logits = self.final_mlp_layers(torch.cat((logits, logits_orig), 2))
+        # logits = self.final_mlp_layers(logits + logits_orig)
+        # logits = self.final_mlp_layers(logits_orig)
+
+        m = torch.distributions.Normal(loc=mu, scale=sigma)
+        #
+        logits_1 = torch.sum(m.log_prob(0.0) * pi, -1).unsqueeze(1)
+        logits_2 = torch.sum(m.log_prob(3.0) * pi, -1).unsqueeze(1)
+        logits_3 = torch.sum(m.log_prob(6.0) * pi, -1).unsqueeze(1)
+        logits_4 = torch.sum(m.log_prob(8.0) * pi, -1).unsqueeze(1)
+        logits_5 = torch.sum(m.log_prob(10.0) * pi, -1).unsqueeze(1)
+        logits_6 = torch.sum(m.log_prob(12.0) * pi, -1).unsqueeze(1)
+        logits_7 = torch.sum(m.log_prob(14.0) * pi, -1).unsqueeze(1)
+        logits_8 = torch.sum(m.log_prob(16.0) * pi, -1).unsqueeze(1)
+        logits_9 = torch.sum(m.log_prob(18.0) * pi, -1).unsqueeze(1)
+        logits_10 = torch.sum(m.log_prob(20.0) * pi, -1).unsqueeze(1)
+        logits_11 = torch.sum(m.log_prob(22.0) * pi, -1).unsqueeze(1)
+        #
+        logits = torch.cat(
+            (
+                logits_1,
+                logits_2,
+                logits_3,
+                logits_4,
+                logits_5,
+                logits_6,
+                logits_7,
+                logits_8,
+                logits_9,
+                logits_10,
+                logits_11,
+             ), -1).unsqueeze(1)
+        # logits = self.logit_classifier(logits)
+        logits = self.logit_classifier(nn.functional.log_softmax(logits, -1))
+        logits = self.final_mlp_layers(logits)
+        # logits = self.logit_classifier_1(logits)
+
+        # orig_logits = self.logit_classifier_2(orig_target_all_output)
+        # final_logits = self.logit_classifier_final(torch.cat())
+
+        return logits
+
+    def forward(self, input_ids_a, token_type_ids_a, attention_mask_a, target_ids_a,
+                input_ids_b, token_type_ids_b, attention_mask_b, target_ids_b):
+        logits_a = self.get_single_inference(input_ids_a, token_type_ids_a, attention_mask_a, target_ids_a)
+        logits_b = self.get_single_inference(input_ids_b, token_type_ids_b, attention_mask_b, target_ids_b)
+
+        logits_a_b = torch.cat((logits_a, logits_b), 2)
+        logits_a_b = nn.functional.relu(logits_a_b)
+        rel_logits = self.rel_classifier(logits_a_b)
+
+        return torch.cat((logits_a_b, rel_logits), 2)
+
+
 class BertForSingleTokenClassification(BertPreTrainedModel):
     def __init__(self, config, num_labels):
         super(BertForSingleTokenClassification, self).__init__(config)
@@ -1011,29 +1166,36 @@ class BertForSingleTokenClassification(BertPreTrainedModel):
         self.log_softmax = nn.LogSoftmax(-1)
         self.softmax = nn.Softmax(-1)
 
+        self.rel_classifier = nn.Linear(14, 2)
+
+        # self.time_attention = BertEncoderPredicate(config)
+        self.time_classifier = nn.Linear(config.hidden_size, num_labels)
+
     def get_single_inference(self, input_ids, token_type_ids, attention_mask, target_ids):
         seq_output, _ = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False)
+        # seq_output = self.all_attention(seq_output, attention_mask)
         target_all_output = seq_output.gather(1, target_ids.view(-1, 1).unsqueeze(2).repeat(1, 1, seq_output.size(2)))
+
+        # time_output = self.time_attention(seq_output, attention_mask)
+        # target_time_output = time_output.gather(1, target_ids.view(-1, 1).unsqueeze(2).repeat(1, 1, seq_output.size(2)))
+
         pooled_output = self.dropout(target_all_output)
         logits = self.classifier(pooled_output)
+        # pooled_output = torch.cat((target_all_output, target_time_output), -1)
+        # logits = self.time_classifier(pooled_output)
+
         return logits
 
-    def forward(self, input_ids, token_type_ids=None, attention_mask=None, labels=None, target_ids=None, longer_target_ids=None):
-        if longer_target_ids is None:
-            return self.get_single_inference(input_ids, token_type_ids, attention_mask, target_ids)
-        place_holder_indices = (longer_target_ids == -1).nonzero().squeeze()
-        non_place_holder_indices = (longer_target_ids != -1).nonzero().squeeze()
-        longer_target_ids[place_holder_indices] = 0
+    def forward(self, input_ids_a, token_type_ids_a, attention_mask_a, target_ids_a,
+                input_ids_b, token_type_ids_b, attention_mask_b, target_ids_b):
+        logits_a = self.get_single_inference(input_ids_a, token_type_ids_a, attention_mask_a, target_ids_a)
+        logits_b = self.get_single_inference(input_ids_b, token_type_ids_b, attention_mask_b, target_ids_b)
 
-        real_logits = self.get_single_inference(input_ids, token_type_ids, attention_mask, target_ids)
-        real_logits = self.log_softmax(real_logits)
-        comparative_logits = self.get_single_inference(input_ids, token_type_ids, attention_mask, longer_target_ids)
-        comparative_logits = self.softmax(comparative_logits)
+        logits_a_b = torch.cat((logits_a, logits_b), 2)
+        logits_a_b = nn.functional.relu(logits_a_b)
+        rel_logits = self.rel_classifier(logits_a_b)
 
-        ret_logits = real_logits.clone()
-        ret_logits[non_place_holder_indices] = torch.exp(ret_logits[non_place_holder_indices]) - comparative_logits[non_place_holder_indices]
-
-        return ret_logits
+        return torch.cat((logits_a_b, rel_logits), 2)
 
 
 class BertForTemporalClassification(BertPreTrainedModel):
@@ -1084,6 +1246,7 @@ class BertForTemporalClassification(BertPreTrainedModel):
     def __init__(self, config, num_labels):
         super(BertForTemporalClassification, self).__init__(config)
         self.num_labels = num_labels
+        self.bert_temporal = BertModel(config)
         self.bert = BertModel(config)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
         # self.LayerNorm = BertLayerNorm(config.hidden_size, eps=1e-12)
@@ -1092,7 +1255,7 @@ class BertForTemporalClassification(BertPreTrainedModel):
         # self.subj_attention = BertEncoderPredicate(config)
         # self.obj_attention = BertEncoderPredicate(config)
         # self.arg3_attention = BertEncoderPredicate(config)
-        self.all_attention = BertEncoderPredicate(config)
+        # self.all_attention = BertEncoderPredicate(config)
 
         self.n_gussians = 4
 
@@ -1117,7 +1280,7 @@ class BertForTemporalClassification(BertPreTrainedModel):
         self.apply(self.init_bert_weights)
 
     def forward(self, input_ids, token_type_ids=None, attention_mask=None, labels=None, target_idx=None, subj_mask=None, obj_mask=None, arg3_mask=None):
-        sequence_output, _ = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False)
+        sequence_output, _ = self.bert_temporal(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False)
 
         # subj_output = self.subj_attention(sequence_output, subj_mask)
         # target_subj_output = subj_output.gather(1, target_idx.view(-1, 1).unsqueeze(2).repeat(1, 1, subj_output.size(2)))
@@ -1128,8 +1291,9 @@ class BertForTemporalClassification(BertPreTrainedModel):
         # arg3_output = self.arg3_attention(sequence_output, arg3_mask)
         # target_arg3_output = arg3_output.gather(1, target_idx.view(-1, 1).unsqueeze(2).repeat(1, 1, arg3_output.size(2)))
 
-        all_output = self.all_attention(sequence_output, attention_mask)
-        target_all_output = all_output.gather(1, target_idx.view(-1, 1).unsqueeze(2).repeat(1, 1, all_output.size(2)))
+        # all_output = self.all_attention(sequence_output, attention_mask)
+        # target_all_output = all_output.gather(1, target_idx.view(-1, 1).unsqueeze(2).repeat(1, 1, all_output.size(2)))
+        target_all_output = sequence_output.gather(1, target_idx.view(-1, 1).unsqueeze(2).repeat(1, 1, sequence_output.size(2)))
         states = target_all_output
 
         # states = torch.cat((target_subj_output, target_obj_output), 2)

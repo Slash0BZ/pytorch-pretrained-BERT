@@ -51,7 +51,7 @@ logger = logging.getLogger(__name__)
 class InputExample(object):
     """A single training/test example for simple sequence classification."""
 
-    def __init__(self, guid, text_a, text_b=None, label=None, target_idx=0, tolerance=1, subj_mask=None, obj_mask=None, arg3_mask=None, adjustment=1.0):
+    def __init__(self, guid, text_a, text_b=None, label=None, target_idx=0, tolerance=1, subj_mask=None, obj_mask=None, arg3_mask=None, adjustment=1.0, readable_label="NONE"):
         """Constructs a InputExample.
 
         Args:
@@ -73,6 +73,7 @@ class InputExample(object):
         self.obj_mask = obj_mask
         self.arg3_mask = arg3_mask
         self.adjustment = adjustment
+        self.readable_label = readable_label
 
 
 class InputFeatures(object):
@@ -369,7 +370,7 @@ class TemporalVerbProcessor(DataProcessor):
             examples.append(
                 InputExample(
                     guid=guid, text_a=text_a, label=label_idx, target_idx=target_idx, subj_mask=subj_mask, obj_mask=obj_mask,
-                    arg3_mask=arg3_mask, adjustment=adjustment
+                    arg3_mask=arg3_mask, adjustment=adjustment, readable_label=label_raw.split(" ")[1].lower()
                 ))
         return examples
 
@@ -1123,7 +1124,8 @@ def gaussian_distribution(y, mu, sigma):
     return torch.add((torch.exp(result) * torch.reciprocal(sigma)) * oneDivSqrtTwoPI, 1e-10)
 
 def mdn_loss_fn(pi, sigma, mu, y, adjustments=None):
-    result = gaussian_distribution(torch.exp(y), torch.exp(mu), torch.exp(sigma)) * pi
+    # result = gaussian_distribution(torch.exp(y), torch.exp(mu), torch.exp(sigma)) * pi
+    result = gaussian_distribution(y, mu, sigma) * pi
     result = torch.sum(result, dim=1)
     result[torch.isnan(result)] = 1e-10
     result[torch.isinf(result)] = 1e-10
@@ -1131,7 +1133,8 @@ def mdn_loss_fn(pi, sigma, mu, y, adjustments=None):
         result = result * adjustments
     result = -torch.log(result)
 
-    m = torch.distributions.Normal(loc=torch.exp(mu), scale=torch.exp(sigma))
+    # m = torch.distributions.Normal(loc=torch.exp(mu), scale=torch.exp(sigma))
+    m = torch.distributions.Normal(loc=mu, scale=sigma)
     zero_cdf = torch.sum(m.cdf(0.0) * pi, dim=1)
     zero_cdf[torch.isnan(zero_cdf)] = 0.0
     result += zero_cdf * 10.0
@@ -1364,8 +1367,8 @@ def main():
     model = BertForTemporalClassification.from_pretrained(args.bert_model,
               cache_dir=cache_dir,
               num_labels=num_labels)
-    for p in model.bert.parameters():
-        p.requires_grad = False
+    # for p in model.bert.parameters():
+    #     p.requires_grad = False
     if args.fp16:
         model.half()
     model.to(device)

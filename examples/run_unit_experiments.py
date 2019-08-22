@@ -452,21 +452,13 @@ class Evaluator:
             "century": "centuries",
         }
         self.duration_val = {
-            "second": 0,
             "seconds": 0,
-            "minute": 1,
             "minutes": 1,
-            "hour": 2,
             "hours": 2,
-            "day": 3,
             "days": 3,
-            "week": 4,
             "weeks": 4,
-            "month": 5,
             "months": 5,
-            "year": 6,
             "years": 6,
-            "century": 7,
             "centuries": 7,
         }
         self.duration_val_full = {
@@ -722,6 +714,18 @@ def train_and_eval():
         print(key + ": " + str(float(mpr_map[key] / float(mr_count[key]))))
 
 
+def get_optimal_prediction(evaluator, prob_map):
+    optimal_val = 10000.0
+    optimal_ret = ""
+    for key in evaluator.duration_val:
+        cur_distance = 0.0
+        for tk in prob_map:
+            cur_distance += prob_map[tk] * float(abs(evaluator.duration_val[tk] - evaluator.duration_val[key]))
+        if cur_distance < optimal_val:
+            optimal_val = cur_distance
+            optimal_ret = key
+    return optimal_ret
+
 def eval_bert_custom():
     pos_to_label = {
         0: "instantaneous",
@@ -830,17 +834,19 @@ def eval_bert_custom():
             continue
         new_lines.append(l)
 
-    print(len(new_lines))
     for i, line in enumerate(new_lines):
         gold = reader.normalize_timex(float(line.split("\t")[2].split()[0]), line.split("\t")[2].split()[1])[0]
         # gold = line.split("\t")[2].split()[1]
         unit_prob_map = {}
         for ii, key in enumerate(duration_keys_ordered):
             if key in ["instantaneous", "decades", "centuries", "forever"]:
-                continue
+                pass
+                # continue
             unit_prob_map[key] = prediction_lines[i].split("\t")[ii]
         ksum = 0.0
         for key in unit_prob_map:
+            if float(unit_prob_map[key]) > 50:
+                unit_prob_map[key] = 50.0
             ksum += math.exp(float(unit_prob_map[key]))
         for key in unit_prob_map:
             unit_prob_map[key] = math.exp(float(unit_prob_map[key])) / ksum
@@ -852,10 +858,12 @@ def eval_bert_custom():
             a_sum += unit_prob_map[k]
         assert 0.99 < a_sum < 1.01
         unit_map = sorted(unit_prob_map.items(), key=lambda x: x[1], reverse=True)
+        top_prediction = get_optimal_prediction(evaluator, unit_prob_map)
         for i, (p, s) in enumerate(unit_map):
             if i == 0 and p == gold:
                 hard_correct += 1.0
-            if i == 0:
+            # if i == 0:
+            if p == top_prediction:
                 top_val = evaluator.duration_val[p]
                 true_val = evaluator.duration_val[gold]
                 td += float(abs(top_val - true_val))
@@ -909,9 +917,107 @@ def convert_prob_file(input_file, reference_file, output_file):
         probs = [x / sum for x in probs]
         f.write(" ".join(tokens) + "\t" + "\t".join([str(x) for x in probs]) + "\n")
 
+
+def get_max_results(file_name):
+    evaluator = Evaluator("unit_output.pkl")
+    lines = [x.strip() for x in open(file_name).readlines()]
+    label_map = {}
+    counter = 0.0
+    distance = 0.0
+    total = 0.0
+    correct = 0.0
+    for line in lines:
+        key = "\t".join(line.split("\t")[:2])
+        if key not in label_map:
+            label_map[key] = []
+        label_map[key].append(line.split("\t")[2].split()[1])
+    f_out = open("samples/UD_English/train.filtered.formatted.txt", "w")
+    for key in label_map:
+        predictions = label_map[key]
+        avg_dist = 0.0
+        avg_counter = 0.0
+        for i in range(0, len(predictions)):
+            for j in range(i + 1, len(predictions)):
+                avg_dist += abs(evaluator.duration_val_full[predictions[i]] - evaluator.duration_val_full[predictions[j]])
+                avg_counter += 1.0
+        if avg_counter > 0 and (avg_dist / avg_counter) > 2:
+            pass
+            # continue
+        if "instantaneous" in predictions or "decades" in predictions or "centuries" in predictions or "forever" in predictions:
+            pass
+            # continue
+        # prediction = random.choice(predictions)
+        d_min = 100
+        acc_max = 0.0
+        acc_cur_total = 0.0
+        acc_cur_correct = 0.0
+        for prediction in evaluator.duration_val_full.keys():
+            d_current = 0.0
+            acc_correct = 0.0
+            acc_total = 0.0
+            for gold in predictions:
+                d_current += abs(evaluator.duration_val_full[gold] - evaluator.duration_val_full[prediction])
+            if d_current < d_min:
+                d_min = d_current
+            for gold in predictions:
+                if gold == prediction:
+                    acc_correct += 1.0
+                acc_total += 1.0
+            cur_acc = acc_correct / acc_total
+            if cur_acc > acc_max:
+                acc_max = cur_acc
+                acc_cur_correct = acc_correct
+                acc_cur_total = acc_total
+        distance += float(d_min)
+        counter += float(len(predictions))
+        total += acc_cur_total
+        correct += acc_cur_correct
+        # for p in predictions:
+        #     f_out.write(key + "\t" + "1 " + p + "\t-1\t-1\t-1\t-1\t-1\t-1\n")
+
+    print(counter)
+    print(correct / total)
+    return float(distance) / counter
+
+def eval_bert_pair_acc():
+    prediction_lines = [x.strip() for x in open("bert_logits.txt").readlines()]
+
+    lines = [x.strip() for x in open("samples/comparative/test.formatted.txt").readlines()]
+    total = 0
+    correct = 0
+    for i, line in enumerate(lines):
+        if i >= len(prediction_lines):
+            break
+        prediction = "LESS"
+        scores = [float(x) for x in prediction_lines[i].split("\t")[-2:]]
+        if scores[1] > scores[0]:
+            prediction = "MORE"
+
+        label = line.split("\t")[-1]
+        if label == "NONE":
+            continue
+        total += 1
+        if prediction == label:
+            correct += 1
+            # print(line)
+            # print(scores)
+            # print()
+        else:
+            pass
+            # print(line)
+            # print(scores)
+            # print()
+    print("Accuracy: " + str(float(correct) / float(total)))
+
+
+# eval_bert_pair_acc()
 # train_and_eval()
 # reader = UDReader("samples/UD_English")
-# reader.save_to_file("samples/UD_English")
+# reader.save_to_file("samples/UD_English_untouched")
 eval_bert_custom()
 # train_and_eval_bert_on_udst()
 # convert_prob_file("bert_logits.txt", "samples/UD_English/test.formatted.txt", "bert_probs_noweight.txt")
+s = 0.0
+for i in range(1):
+    s += get_max_results("samples/UD_English/test.formatted.txt")
+print(s)

@@ -3,10 +3,11 @@ import os
 import jsonlines
 import pickle
 import random
+import time
 import json
 import numpy as np
 from word2number import w2n
-from ccg_nlpy import local_pipeline
+# from ccg_nlpy import local_pipeline
 from math import floor
 from scipy.stats import norm
 import matplotlib.pyplot as plt
@@ -69,7 +70,7 @@ class GigawordExtractor:
         for sent in sent_view:
             tokens_lower = sent['tokens'].lower().split()
             for (i, v) in enumerate(tokens_lower):
-                if v in ["while", "during", "when"]:
+                if v in ["while"]:
                     ret.append(sent['tokens'])
                     break
         return ret
@@ -110,24 +111,58 @@ class PretrainedModel:
         return Predictor.from_archive(archive, self.predictor_name)
 
 
+class Tokenizer:
+
+    def split_words(self, sentence):
+        return sentence.split()
+
+
 class AllenSRL:
 
     def __init__(self, output_path):
         model = PretrainedModel('https://s3-us-west-2.amazonaws.com/allennlp/models/srl-model-2018.05.25.tar.gz',
                                 'semantic-role-labeling')
         self.predictor = model.predictor()
+        self.predictor._model = self.predictor._model.cuda()
         self.output_path = output_path
 
     def predict_batch(self, sentences):
         f_out = jsonlines.open(self.output_path, "w")
-        for sentence in sentences:
-            prediction = self.predictor.predict(sentence)
+        counter = 0
+        start_time = time.time()
+        batch_size = 128
+        for i in range(0, len(sentences), batch_size):
+            input_map = []
+            for j in range(0, batch_size):
+                input_map.append({"sentence": sentences[i+j]})
+            prediction = self.predictor.predict_batch_json(input_map)
             f_out.write(prediction)
+            counter += 1
+            if counter % 10 == 0:
+                print("Average Time: " + str((time.time() - start_time) / (10.0 * float(batch_size))))
+                start_time = time.time()
+
+    def predict_single(self, instances):
+        f_out = jsonlines.open(self.output_path, "w")
+        counter = 0
+        start_time = time.time()
+        for instance in instances:
+            prediction = self.predictor.predict_tokenized(instance.split())
+            f_out.write(prediction)
+            counter += 1
+            if counter % 10 == 0:
+                print("Average Time: " + str((time.time() - start_time) / 10.0))
+                start_time = time.time()
 
     def predict_file(self, path):
         with open(path) as f:
             lines = [x.strip() for x in f.readlines()]
-        self.predict_batch(lines)
+        new_lines = []
+        for l in lines:
+            if len(l.split()) < 150:
+                new_lines.append(l)
+        # self.predict_batch(new_lines)
+        self.predict_single(new_lines)
 
 
 class SentenceProcessor:
@@ -230,72 +265,122 @@ class SentenceProcessor:
         reader = jsonlines.Reader(lines)
         f_out = open(out_path, "w")
 
-        for obj in reader:
-            tmp_range = [-1, -1]
-            short_event_verb = -1
-            long_event_verb = -1
-            for verbs_obj in obj['verbs']:
-                tokens = obj['words']
-                tags = verbs_obj['tags']
-                parsed = self.parse_single_seq(tokens, tags)
-                if "ARGMTMP" in parsed:
-                    tmp_arg = parsed["ARGMTMP"]
-                    for i, v in enumerate(tmp_arg):
-                        if v.lower() in ["while"]:
-                            short_event_verb = self.get_verb_position(tags)
-                            tmp_range = self.get_tmp_range(tags)
-                            break
-                if tmp_range[0] <= self.get_verb_position(tags) < tmp_range[1]:
-                    long_event_verb = self.get_verb_position(tags)
-            if short_event_verb > -1 and long_event_verb > -1:
-                f_out.write(" ".join(obj["words"]) + "\t" + str(short_event_verb) + "\t" + str(long_event_verb) + "\n")
+        for obj_group in reader:
+            for obj in obj_group:
+                tmp_range = [-1, -1]
+                short_event_verb = -1
+                long_event_verb = -1
+                for verbs_obj in obj['verbs']:
+                    tokens = obj['words']
+                    tags = verbs_obj['tags']
+                    parsed = self.parse_single_seq(tokens, tags)
+                    if "ARGMTMP" in parsed:
+                        tmp_arg = parsed["ARGMTMP"]
+                        for i, v in enumerate(tmp_arg):
+                            if v.lower() in ["while"]:
+                                short_event_verb = self.get_verb_position(tags)
+                                tmp_range = self.get_tmp_range(tags)
+                                break
+                    if tmp_range[0] <= self.get_verb_position(tags) < tmp_range[1]:
+                        long_event_verb = self.get_verb_position(tags)
+                if short_event_verb > -1 and long_event_verb > -1:
+                    f_out.write(" ".join(obj["words"]) + "\t" + str(short_event_verb) + "\t" + str(long_event_verb) + "\n")
 
     def format_srl_file_simplified_pair(self, path, out_path):
         lines = [x.strip() for x in open(path).readlines()]
         reader = jsonlines.Reader(lines)
-        f_out = open(out_path, "w")
+        f_out = open(out_path, "a")
 
-        for obj in reader:
-            tmp_range = [-1, -1]
-            short_event_verb = -1
-            long_event_verb = -1
-            short_event_tokens = []
-            long_event_tokens = []
-            for verbs_obj in obj['verbs']:
-                tokens = obj['words']
-                tags = verbs_obj['tags']
-                parsed = self.parse_single_seq(tokens, tags)
-                if "ARGMTMP" in parsed:
-                    tmp_arg = parsed["ARGMTMP"]
-                    for i, v in enumerate(tmp_arg):
-                        if v.lower() in ["while"]:
-                            tmp_range = self.get_tmp_range(tags)
-                            short_event_tokens, short_event_verb = self.get_all_related_tokens_with_verb_pos(tokens, tags)
+        for obj_group in reader:
+            for obj in obj_group:
+                tmp_range = [-1, -1]
+                short_event_verb = -1
+                long_event_verb = -1
+                short_event_tokens = []
+                long_event_tokens = []
+                for verbs_obj in obj['verbs']:
+                    tokens = obj['words']
+                    tags = verbs_obj['tags']
+                    parsed = self.parse_single_seq(tokens, tags)
+                    if "ARGMTMP" in parsed:
+                        tmp_arg = parsed["ARGMTMP"]
+                        for i, v in enumerate(tmp_arg):
+                            if v.lower() in ["while"]:
+                                tmp_range = self.get_tmp_range(tags)
+                                short_event_tokens, short_event_verb = self.get_all_related_tokens_with_verb_pos(tokens, tags)
+                                break
+                    if tmp_range[0] <= self.get_verb_position(tags) < tmp_range[1]:
+                        long_event_tokens, long_event_verb = self.get_all_related_tokens_with_verb_pos(tokens, tags)
+                        if len(long_event_tokens) < 3:
+                            long_event_verb = -1
+                            long_event_tokens = []
+                        else:
                             break
-                if tmp_range[0] <= self.get_verb_position(tags) < tmp_range[1]:
-                    long_event_tokens, long_event_verb = self.get_all_related_tokens_with_verb_pos(tokens, tags)
-                    if len(long_event_tokens) < 3:
-                        long_event_verb = -1
-                        long_event_tokens = []
-                    else:
-                        break
-            if short_event_verb > -1 and long_event_verb > -1:
-                f_out.write(" ".join(short_event_tokens) + "\t" + str(short_event_verb) + "\t" + "NONE\t" +
-                            " ".join(long_event_tokens) + "\t" + str(long_event_verb) + "\tNONE\n")
+                if short_event_verb > -1 and long_event_verb > -1:
+                    f_out.write(" ".join(short_event_tokens) + "\t" + str(short_event_verb) + "\t" + "NONE\t" +
+                                " ".join(long_event_tokens) + "\t" + str(long_event_verb) + "\tNONE\n")
 
     def combine_abs_comp(self, abs_path, comp_path, out_path):
+        duration_val = {
+            "second": 0,
+            "seconds": 0,
+            "minute": 1,
+            "minutes": 1,
+            "hour": 2,
+            "hours": 2,
+            "day": 3,
+            "days": 3,
+            "week": 4,
+            "weeks": 4,
+            "month": 5,
+            "months": 5,
+            "year": 6,
+            "years": 6,
+            "century": 7,
+            "centuries": 7,
+        }
         lines = [x.strip() for x in open(abs_path).readlines()]
+        random.shuffle(lines)
+        new_lines = []
+        seen = set()
+        for l in lines:
+            if l.split("\t")[2].split(" ")[1] in ["instantaneous", "decades", "centuries", "forever"]:
+                pass
+                # continue
+            key = "\t".join(l.split("\t")[:3])
+            if key in seen:
+                pass
+                # continue
+
+            seen.add(key)
+            new_lines.append(l)
+        lines = new_lines
         f_out = open(out_path, "w")
-        for i in range(0, len(lines) - 1):
+        for i in range(0, len(lines) - 1, 2):
             f_out.write("\t".join(lines[i].split("\t")[:3]) + "\t" + "\t".join(lines[i + 1].split("\t")[:3]) + "\tNONE\n")
-        lines = [x.strip() for x in open(comp_path).readlines()]
-        for line in lines:
-            r = random.random()
-            groups = line.split("\t")
-            if r < 0.5:
-                f_out.write(line + "\tLESS\n")
-            else:
-                f_out.write("\t".join(groups[3:6]) + "\t" + "\t".join(groups[:3]) + "\tMORE\n")
+        # for pair_count in range(0, 30000):
+        #     pair_a = random.choice(range(len(lines)))
+        #     pair_b = random.choice(range(len(lines)))
+        #
+        #     label_a = lines[pair_a].split("\t")[2].split(" ")[1]
+        #     label_b = lines[pair_b].split("\t")[2].split(" ")[1]
+        #
+        #     if abs(duration_val[label_a] - duration_val[label_b]) < 3:
+        #         continue
+        #     comp_label = "LESS"
+        #     if duration_val[label_a] > duration_val[label_b]:
+        #         comp_label = "MORE"
+        #     f_out.write("\t".join(lines[pair_a].split("\t")[:3]) + "\t" + "\t".join(lines[pair_b].split("\t")[:3]) + "\t" + comp_label + "\n")
+
+        # lines = [x.strip() for x in open(comp_path).readlines()]
+        # lines = list(set(lines))
+        # for line in lines:
+        #     r = random.random()
+        #     groups = line.split("\t")
+        #     if r < 0.5:
+        #         f_out.write(line + "\tLESS\n")
+        #     else:
+        #         f_out.write("\t".join(groups[3:6]) + "\t" + "\t".join(groups[:3]) + "\tMORE\n")
 
     def randomize_file(self, path, out_path):
         lines = [x.strip() for x in open(path).readlines()]
@@ -307,24 +392,56 @@ class SentenceProcessor:
     def print_readable_files(self, path, out_path):
         lines = [x.strip() for x in open(path).readlines()]
         f_out = open(out_path, "w")
+        seen = set()
         for l in lines:
             tokens = l.split("\t")[0].split()
             verb = int(l.split("\t")[1])
             label = l.split("\t")[2]
-            tokens[verb] = "[" + tokens[verb] + "]"
-            f_out.write(" ".join(tokens) + "\t" + label + "\n")
+            tokens[verb] = "<strong>" + tokens[verb] + "</strong>"
+            key = " ".join(tokens)
+            if key in seen:
+                continue
+            seen.add(key)
+            f_out.write(key + "\t" + label + "\n")
+
+    def split_file(self, path, train_out, dev_out, test_out):
+        ratio_train = 0.7
+        ratio_dev = 0.8
+        lines = [x.strip() for x in open(path).readlines()]
+        lines = list(set(lines))
+        random.shuffle(lines)
+        f_train = open(train_out, "w")
+        f_test = open(test_out, "w")
+        f_dev = open(dev_out, "w")
+        for l in lines:
+            r = random.random()
+            if r < ratio_train:
+                f_train.write(l + "\n")
+            elif r < ratio_dev:
+                f_dev.write(l + "\n")
+            else:
+                f_test.write(l + "\n")
+
 
 # g = GigawordExtractor()
-# g.process_path("/Volumes/SSD/gigaword/data/afp_eng", "samples/comparative_afp_eng.txt")
+# g.process_path("/Volumes/SSD/gigaword/data/rest", "samples/comparative_rest_while.txt")
 
 processor = SentenceProcessor()
-processor.format_srl_file_simplified_pair("samples/comparative_afp_eng_while_srl_valid.jsonl", "samples/comparative_afp_eng_while_srl_simplied_pairs.txt")
+# processor.split_file("samples/comparative/comparative_gigaword_all_pairs_instance.txt",
+#                      "samples/comparative/train.formatted.txt",
+#                      "samples/comparative/dev.formatted.txt",
+#                      "samples/comparative/test.formatted.txt",
+#                      )
+# processor.format_srl_file_simplified_pair("samples/comparative_rest_while_srl_3.jsonl", "samples/comparative_rest_while_srl_simplied_pairs.txt")
 processor.combine_abs_comp(
-    "samples/UD_English_finetune_comparative/train.original.formatted.txt",
+    "samples/UD_English/train.formatted.txt",
     "samples/comparative_afp_eng_while_srl_simplied_pairs.txt",
-    "samples/UD_English_finetune_comparative/train.pair.formatted.txt",
+    "samples/UD_English/train.pair.formatted.txt",
+    # "samples/comparative/train.formatted.txt",
+    # "samples/comparative/comparative_gigaword_all_pairs.txt",
+    # "samples/comparative/comparative_gigaword_all_pairs_instance.txt",
 )
-processor.randomize_file("samples/UD_English_finetune_comparative/train.pair.formatted.txt","samples/UD_English_finetune_comparative/train.pair.formatted.txt")
+# processor.randomize_file("samples/UD_English_finetune_comparative/train.pair.formatted.txt","samples/UD_English_finetune_comparative/train.pair.formatted.txt")
 # processor.print_readable_files("samples/UD_English/dev.formatted.txt", "samples/UD_English/dev.readable.txt")
 # processor.randomize_file("samples/UD_English_finetune_comparative/train.formatted.txt", "samples/UD_English_finetune_comparative/train.formatted.txt")
 # processor.randomize_file("samples/UD_English_finetune_comparative/train.original.formatted.txt", "samples/UD_English_finetune_comparative/train.original.formatted.txt")
@@ -332,6 +449,6 @@ processor.randomize_file("samples/UD_English_finetune_comparative/train.pair.for
 # processor.parse_srl_file("samples/comparative_afp_eng_while_srl.jsonl", "samples/comparative_afp_eng_while_srl_valid.jsonl")
 # processor.process_document("samples/comparative_afp_eng.txt")
 
-# srl = AllenSRL("samples/comparative_afp_eng_while_srl.jsonl")
-# srl.predict_file("samples/comparative_afp_eng_while.txt")
+# srl = AllenSRL("samples/raw_duration_processed_2.jsonl")
+# srl.predict_file("samples/duration/verb_formatted_all_svo_better_filter_4.txt")
 

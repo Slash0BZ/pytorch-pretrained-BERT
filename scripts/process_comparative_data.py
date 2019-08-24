@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 from allennlp import predictors
 from allennlp.predictors import Predictor
 from allennlp.models.archival import load_archive
+from ccg_nlpy import local_pipeline
 
 
 class GigawordDocument:
@@ -343,21 +344,25 @@ class SentenceProcessor:
         random.shuffle(lines)
         new_lines = []
         seen = set()
+        out_lines = []
         for l in lines:
             if l.split("\t")[2].split(" ")[1] in ["instantaneous", "decades", "centuries", "forever"]:
-                pass
-                # continue
+                continue
             key = "\t".join(l.split("\t")[:3])
             if key in seen:
-                pass
-                # continue
-
+                continue
             seen.add(key)
             new_lines.append(l)
         lines = new_lines
         f_out = open(out_path, "w")
         for i in range(0, len(lines) - 1, 2):
-            f_out.write("\t".join(lines[i].split("\t")[:3]) + "\t" + "\t".join(lines[i + 1].split("\t")[:3]) + "\tNONE\n")
+            out_lines.append("\t".join(lines[i].split("\t")[:3]) + "\t" + "\t".join(lines[i + 1].split("\t")[:3]) + "\tNONE\n")
+        lines = open(comp_path).readlines()
+        lines = list(set(lines))
+        out_lines.extend(lines)
+        random.shuffle(out_lines)
+        for l in out_lines:
+            f_out.write(l)
         # for pair_count in range(0, 30000):
         #     pair_a = random.choice(range(len(lines)))
         #     pair_b = random.choice(range(len(lines)))
@@ -423,24 +428,91 @@ class SentenceProcessor:
                 f_test.write(l + "\n")
 
 
+def extract_conceptnet_pairs():
+    f_out = open("samples/comparative/conceptnet_raw.txt", "w")
+    with open("/Volumes/Storage/Resources/conceptnet-assertions-5.7.0.csv") as fp:
+        for line in fp:
+            if "/r/HasSubevent/" in line:
+                f_out.write(line)
+
+
+def format_conceptnet_pairs():
+    pipeline = local_pipeline.LocalPipeline()
+    lines = [x.strip().split("\t")[-1] for x in open("samples/comparative/conceptnet_raw.txt").readlines()]
+    f_out = open("samples/comparative/conceptnet.formatted.txt", "w")
+    for line in lines:
+        data = json.loads(line)
+        s_event = data["surfaceEnd"]
+        l_event = data["surfaceStart"]
+        try:
+            s_doc = pipeline.doc(s_event)
+            l_doc = pipeline.doc(l_event)
+        except:
+            continue
+        s_pos_view = list(s_doc.get_pos)
+        s_verb_pos = -1
+        s_tokens = []
+        for i, token_group in enumerate(s_pos_view):
+            if token_group['label'].startswith("VB"):
+                s_verb_pos = i
+            s_tokens.append(token_group['tokens'])
+
+        l_pos_view = list(l_doc.get_pos)
+        l_verb_pos = -1
+        l_tokens = []
+        for i, token_group in enumerate(l_pos_view):
+            if token_group['label'].startswith("VB"):
+                l_verb_pos = i
+            l_tokens.append(token_group['tokens'])
+
+        if s_verb_pos == -1 or l_verb_pos == -1:
+            continue
+        r = random.random()
+        if r < 0.5:
+            f_out.write(" ".join(s_tokens) + "\t" + str(s_verb_pos) + "\tNONE\t" +
+                        " ".join(l_tokens) + "\t" + str(l_verb_pos) + "\tNONE\tLESS\n")
+        else:
+            f_out.write(" ".join(l_tokens) + "\t" + str(l_verb_pos) + "\tNONE\t" +
+                        " ".join(s_tokens) + "\t" + str(s_verb_pos) + "\tNONE\tMORE\n")
+
+
+def get_srl_input_sentences():
+    lines = [x.strip().split("\t")[0] for x in open("samples/UD_English/train.formatted.txt").readlines()]
+    lines_2 = [x.strip().split("\t")[0] for x in open("samples/UD_English/test.formatted.txt").readlines()]
+    print(len(lines))
+    lines.extend(lines_2)
+    print(len(lines))
+    lines = list(set(lines))
+    f_out = open("samples/UD_English/to_srl.txt", "w")
+    for l in lines:
+        f_out.write(l + "\n")
+
+
+
+# extract_conceptnet_pairs()
+
+# get_srl_input_sentences()
+format_conceptnet_pairs()
+
+
 # g = GigawordExtractor()
 # g.process_path("/Volumes/SSD/gigaword/data/rest", "samples/comparative_rest_while.txt")
 
-processor = SentenceProcessor()
-# processor.split_file("samples/comparative/comparative_gigaword_all_pairs_instance.txt",
-#                      "samples/comparative/train.formatted.txt",
-#                      "samples/comparative/dev.formatted.txt",
-#                      "samples/comparative/test.formatted.txt",
-#                      )
-# processor.format_srl_file_simplified_pair("samples/comparative_rest_while_srl_3.jsonl", "samples/comparative_rest_while_srl_simplied_pairs.txt")
-processor.combine_abs_comp(
-    "samples/UD_English/train.formatted.txt",
-    "samples/comparative_afp_eng_while_srl_simplied_pairs.txt",
-    "samples/UD_English/train.pair.formatted.txt",
-    # "samples/comparative/train.formatted.txt",
-    # "samples/comparative/comparative_gigaword_all_pairs.txt",
-    # "samples/comparative/comparative_gigaword_all_pairs_instance.txt",
-)
+# processor = SentenceProcessor()
+# # processor.split_file("samples/comparative/comparative_gigaword_all_pairs_instance.txt",
+# #                      "samples/comparative/train.formatted.txt",
+# #                      "samples/comparative/dev.formatted.txt",
+# #                      "samples/comparative/test.formatted.txt",
+# #                      )
+# # processor.format_srl_file_simplified_pair("samples/comparative_rest_while_srl_3.jsonl", "samples/comparative_rest_while_srl_simplied_pairs.txt")
+# processor.combine_abs_comp(
+#     "samples/UD_English_finetune/test.srl.formatted.txt",
+#     "samples/comparative/test.formatted.txt",
+#     "samples/combine_test/test.formatted.txt",
+#     # "samples/comparative/train.formatted.txt",
+#     # "samples/comparative/comparative_gigaword_all_pairs.txt",
+#     # "samples/comparative/comparative_gigaword_all_pairs_instance.txt",
+# )
 # processor.randomize_file("samples/UD_English_finetune_comparative/train.pair.formatted.txt","samples/UD_English_finetune_comparative/train.pair.formatted.txt")
 # processor.print_readable_files("samples/UD_English/dev.formatted.txt", "samples/UD_English/dev.readable.txt")
 # processor.randomize_file("samples/UD_English_finetune_comparative/train.formatted.txt", "samples/UD_English_finetune_comparative/train.formatted.txt")
@@ -449,6 +521,9 @@ processor.combine_abs_comp(
 # processor.parse_srl_file("samples/comparative_afp_eng_while_srl.jsonl", "samples/comparative_afp_eng_while_srl_valid.jsonl")
 # processor.process_document("samples/comparative_afp_eng.txt")
 
-# srl = AllenSRL("samples/raw_duration_processed_2.jsonl")
-# srl.predict_file("samples/duration/verb_formatted_all_svo_better_filter_4.txt")
+# srl = AllenSRL("samples/UD_English/train.srl.jsonl")
+# srl.predict_file("samples/UD_English/train.formatted.txt")
+# #
+# srl = AllenSRL("samples/UD_English/all_srl.jsonl")
+# srl.predict_file("samples/UD_English/to_srl.txt")
 

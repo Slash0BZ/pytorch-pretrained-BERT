@@ -1070,7 +1070,7 @@ class BertForSingleTokenClassificationFollowTemporal(BertPreTrainedModel):
 
         self.rel_classifier = nn.Linear(num_labels * 2, 2)
 
-        self.logit_classifier = nn.Linear(num_labels, num_labels)
+        self.logit_classifier = nn.Linear(11, num_labels)
         self.classifier = nn.Linear(config.hidden_size, num_labels)
 
         self.final_mlp_layers = nn.Sequential(
@@ -1106,17 +1106,17 @@ class BertForSingleTokenClassificationFollowTemporal(BertPreTrainedModel):
 
         m = torch.distributions.Normal(loc=mu, scale=sigma)
         #
-        logits_1 = torch.sum(m.log_prob(0.0) * pi, -1).unsqueeze(1)
-        logits_2 = torch.sum(m.log_prob(3.0) * pi, -1).unsqueeze(1)
-        logits_3 = torch.sum(m.log_prob(6.0) * pi, -1).unsqueeze(1)
-        logits_4 = torch.sum(m.log_prob(8.0) * pi, -1).unsqueeze(1)
-        logits_5 = torch.sum(m.log_prob(10.0) * pi, -1).unsqueeze(1)
-        logits_6 = torch.sum(m.log_prob(12.0) * pi, -1).unsqueeze(1)
-        logits_7 = torch.sum(m.log_prob(14.0) * pi, -1).unsqueeze(1)
-        logits_8 = torch.sum(m.log_prob(16.0) * pi, -1).unsqueeze(1)
-        logits_9 = torch.sum(m.log_prob(18.0) * pi, -1).unsqueeze(1)
-        logits_10 = torch.sum(m.log_prob(20.0) * pi, -1).unsqueeze(1)
-        logits_11 = torch.sum(m.log_prob(22.0) * pi, -1).unsqueeze(1)
+        logits_1 = torch.sum(m.log_prob(0) * pi, -1).unsqueeze(1)
+        logits_2 = torch.sum(m.log_prob(2.7) * pi, -1).unsqueeze(1)
+        logits_3 = torch.sum(m.log_prob(6.8) * pi, -1).unsqueeze(1)
+        logits_4 = torch.sum(m.log_prob(10.0) * pi, -1).unsqueeze(1)
+        logits_5 = torch.sum(m.log_prob(11.9) * pi, -1).unsqueeze(1)
+        logits_6 = torch.sum(m.log_prob(13.3) * pi, -1).unsqueeze(1)
+        logits_7 = torch.sum(m.log_prob(15.9) * pi, -1).unsqueeze(1)
+        logits_8 = torch.sum(m.log_prob(18.2) * pi, -1).unsqueeze(1)
+        logits_9 = torch.sum(m.log_prob(20.5) * pi, -1).unsqueeze(1)
+        logits_10 = torch.sum(m.log_prob(22.0) * pi, -1).unsqueeze(1)
+        logits_11 = torch.sum(m.log_prob(23.0) * pi, -1).unsqueeze(1)
         #
         logits = torch.cat(
             (
@@ -1135,6 +1135,7 @@ class BertForSingleTokenClassificationFollowTemporal(BertPreTrainedModel):
         # logits = self.logit_classifier(logits)
         logits = self.logit_classifier(nn.functional.log_softmax(logits, -1))
         logits = self.final_mlp_layers(logits)
+        # logits = self.final_mlp_layers(torch.cat((logits, logits_orig), 2))
         # logits = self.logit_classifier_1(logits)
 
         # orig_logits = self.logit_classifier_2(orig_target_all_output)
@@ -1159,43 +1160,34 @@ class BertForSingleTokenClassification(BertPreTrainedModel):
         super(BertForSingleTokenClassification, self).__init__(config)
         self.num_labels = num_labels
         self.bert = BertModel(config)
-        # self.all_attention = BertEncoderPredicate(config)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        self.classifier = nn.Linear(config.hidden_size, num_labels)
         self.apply(self.init_bert_weights)
         self.log_softmax = nn.LogSoftmax(-1)
         self.softmax = nn.Softmax(-1)
 
-        self.rel_classifier = nn.Linear(14, 2)
-
-        # self.time_attention = BertEncoderPredicate(config)
-        self.time_classifier = nn.Linear(config.hidden_size, num_labels)
+        self.comparison_classifier = nn.Linear(config.hidden_size, 1)
+        self.label_classifier = nn.Linear(config.hidden_size, self.num_labels)
+        self.rel_classifier = nn.Linear(2, 2)
 
     def get_single_inference(self, input_ids, token_type_ids, attention_mask, target_ids):
         seq_output, _ = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False)
-        # seq_output = self.all_attention(seq_output, attention_mask)
         target_all_output = seq_output.gather(1, target_ids.view(-1, 1).unsqueeze(2).repeat(1, 1, seq_output.size(2)))
 
-        # time_output = self.time_attention(seq_output, attention_mask)
-        # target_time_output = time_output.gather(1, target_ids.view(-1, 1).unsqueeze(2).repeat(1, 1, seq_output.size(2)))
-
         pooled_output = self.dropout(target_all_output)
-        logits = self.classifier(pooled_output)
-        # pooled_output = torch.cat((target_all_output, target_time_output), -1)
-        # logits = self.time_classifier(pooled_output)
+        logits = self.label_classifier(pooled_output)
+        comparison_logits = self.comparison_classifier(pooled_output)
 
-        return logits
+        return logits, comparison_logits
 
     def forward(self, input_ids_a, token_type_ids_a, attention_mask_a, target_ids_a,
                 input_ids_b, token_type_ids_b, attention_mask_b, target_ids_b):
-        logits_a = self.get_single_inference(input_ids_a, token_type_ids_a, attention_mask_a, target_ids_a)
-        logits_b = self.get_single_inference(input_ids_b, token_type_ids_b, attention_mask_b, target_ids_b)
+        logits_a, comparison_logits_a = self.get_single_inference(input_ids_a, token_type_ids_a, attention_mask_a, target_ids_a)
+        logits_b, comparison_logits_b = self.get_single_inference(input_ids_b, token_type_ids_b, attention_mask_b, target_ids_b)
 
         logits_a_b = torch.cat((logits_a, logits_b), 2)
-        logits_a_b = nn.functional.relu(logits_a_b)
-        rel_logits = self.rel_classifier(logits_a_b)
+        logits_rel = self.rel_classifier(torch.cat((comparison_logits_a, comparison_logits_b), 2))
 
-        return torch.cat((logits_a_b, rel_logits), 2)
+        return torch.cat((logits_a_b, logits_rel), 2)
 
 
 class BertForTemporalClassification(BertPreTrainedModel):

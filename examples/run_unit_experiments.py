@@ -459,7 +459,6 @@ class Evaluator:
             "weeks": 4,
             "months": 5,
             "years": 6,
-            "centuries": 7,
         }
         self.duration_val_full = {
             "instantaneous": 0,
@@ -719,12 +718,146 @@ def get_optimal_prediction(evaluator, prob_map):
     optimal_ret = ""
     for key in evaluator.duration_val:
         cur_distance = 0.0
-        for tk in prob_map:
-            cur_distance += prob_map[tk] * float(abs(evaluator.duration_val[tk] - evaluator.duration_val[key]))
+        for tk, tv in prob_map:
+            cur_distance += tv * float(abs(evaluator.duration_val[tk] - evaluator.duration_val[key]))
         if cur_distance < optimal_val:
             optimal_val = cur_distance
             optimal_ret = key
     return optimal_ret
+
+
+def get_unit_map(scores, label_list):
+    unit_prob_map = {}
+    for i, key in enumerate(label_list):
+        unit_prob_map[key] = scores[i]
+    ksum = 0.0
+    for key in unit_prob_map:
+        ksum += math.exp(float(unit_prob_map[key]))
+    for key in unit_prob_map:
+        unit_prob_map[key] = math.exp(float(unit_prob_map[key])) / ksum
+    unit_map = sorted(unit_prob_map.items(), key=lambda x: x[1], reverse=True)
+    return unit_map
+
+
+def eval_combined_pair_data(gold_path, predict_logits, optimize=True):
+    duration_keys_ordered = [
+        "seconds",
+        "minutes",
+        "hours",
+        "days",
+        "weeks",
+        "months",
+        "years",
+    ]
+    distance_map = {
+        "seconds": 0,
+        "minutes": 1,
+        "hours": 2,
+        "days": 3,
+        "weeks": 4,
+        "months": 5,
+        "years": 6,
+    }
+    gold_lines = [x.strip() for x in open(gold_path).readlines()]
+    filtered_gold_lines = []
+    evaluator = Evaluator("unit_exp_output.pkl")
+    reader = DataReader("temp.txt")
+    for line in gold_lines:
+        groups = line.split("\t")
+        if groups[2] == "NONE":
+            filtered_gold_lines.append(line)
+            continue
+        if len(groups[0].split()) > 120 or len(groups[3].split()) > 120:
+            continue
+        label_a = groups[2].lower()
+        label_a_num = float(label_a.split()[0])
+        if label_a_num < 1.0:
+            continue
+        label_a, _ = reader.normalize_timex(label_a_num, label_a.split()[1].lower())
+        label_b = groups[5].lower()
+        label_b_num = float(label_b.split()[0])
+        if label_b_num < 1.0:
+            continue
+        label_b, _ = reader.normalize_timex(label_b_num, label_b.split()[1].lower())
+        if label_a in ["instantaneous", "decades", "centuries", "forever"] or label_b in ["instantaneous", "decades", "centuries", "forever"]:
+            continue
+        filtered_gold_lines.append(line)
+    gold_lines = filtered_gold_lines
+
+    logits = [x.strip() for x in open(predict_logits).readlines()]
+    assert(len(gold_lines) == len(logits))
+
+    pair_correct = 0.0
+    pair_total = 0.0
+
+    classification_total = 0.0
+    classification_distance = 0.0
+    count_map = {}
+    prediction_count_map = {}
+    for i in range(0, len(gold_lines)):
+        groups = gold_lines[i].split("\t")
+        label_a = groups[2].lower()
+        label_b = groups[5].lower()
+
+        scores = [float(x) for x in logits[i].split("\t")]
+        if label_a == "none":
+            pair_total += 1.0
+            label_comparison = groups[-1]
+            prediction = "LESS"
+            if scores[-1] > scores[-2]:
+                prediction = "MORE"
+            if label_comparison == prediction:
+                pair_correct += 1.0
+        else:
+            val_a = float(label_a.split()[0])
+            unit_a = label_a.split()[1]
+            label_a, _ = reader.normalize_timex(val_a, unit_a)
+            val_b = float(label_b.split()[0])
+            unit_b = label_b.split()[1]
+            label_b, _ = reader.normalize_timex(val_b, unit_b)
+            if label_a not in count_map:
+                count_map[label_a] = 0
+            if label_b not in count_map:
+                count_map[label_b] = 0
+            count_map[label_a] += 1
+            count_map[label_b] += 1
+            prediction_map_a = get_unit_map(scores[0:7], duration_keys_ordered)
+            prediction_map_b = get_unit_map(scores[7:14], duration_keys_ordered)
+            prediction_a = "ERROR"
+            prediction_b = "ERROR"
+            if optimize:
+                prediction_a = get_optimal_prediction(evaluator, prediction_map_a)
+                prediction_b = get_optimal_prediction(evaluator, prediction_map_b)
+            else:
+                for _, (p, _) in enumerate(prediction_map_a):
+                    prediction_a = p
+                    break
+                for _, (p, _) in enumerate(prediction_map_b):
+                    prediction_b = p
+                    break
+
+            if prediction_a not in prediction_count_map:
+                prediction_count_map[prediction_a] = 0
+            if prediction_b not in prediction_count_map:
+                prediction_count_map[prediction_b] = 0
+            prediction_count_map[prediction_a] += 1
+            prediction_count_map[prediction_b] += 1
+
+            # if label_a != "years":
+            # else:
+            #     classification_total -= 1.0
+            # if label_b != "years":
+            # else:
+            #     classification_total -= 1.0
+            classification_distance += float(abs(distance_map[label_a] - distance_map[prediction_a]))
+            classification_distance += float(abs(distance_map[label_b] - distance_map[prediction_b]))
+            classification_total += 2.0
+
+    print("Pairwise Acc.: " + str(pair_correct / pair_total))
+    print("Classification Dist.: " + str(classification_distance / classification_total))
+    print(count_map)
+    print(prediction_count_map)
+
 
 def eval_bert_custom():
     pos_to_label = {
@@ -917,6 +1050,58 @@ def convert_prob_file(input_file, reference_file, output_file):
         probs = [x / sum for x in probs]
         f.write(" ".join(tokens) + "\t" + "\t".join([str(x) for x in probs]) + "\n")
 
+def convert_prob_file_pair(input_file, reference_file, output_file):
+    prob_lines = [x.strip() for x in open(input_file).readlines()]
+    ref_lines = [x.strip() for x in open(reference_file).readlines()]
+    ref_lines_new = []
+    reader = DataReader("temp.txt")
+    for l in ref_lines:
+        if l.split("\t")[-1] != "NONE":
+            ref_lines_new.append(l)
+            continue
+        if len(l.split("\t")[0].split()) > 120 or len(l.split("\t")[3].split()) > 120:
+            continue
+        gold = l.split("\t")[2].split()[1].lower()
+        val = float(l.split("\t")[2].split()[0])
+        gold, _ = reader.normalize_timex(val, gold)
+        if val < 1.0:
+            continue
+        if gold in ["instantaneous", "decades", "centuries", "forever"]:
+            continue
+        gold = l.split("\t")[5].split()[1].lower()
+        val = float(l.split("\t")[5].split()[0])
+        gold, _ = reader.normalize_timex(val, gold)
+        if val < 1.0:
+            continue
+        if gold in ["instantaneous", "decades", "centuries", "forever"]:
+            continue
+        ref_lines_new.append(l)
+    ref_lines = ref_lines_new
+
+    assert(len(ref_lines) == len(prob_lines))
+    f = open(output_file, "w")
+    for i in range(0, len(prob_lines)):
+        if ref_lines[i].split("\t")[-1] != "NONE":
+            continue
+        tokens = ref_lines[i].split("\t")[0].split()
+        pos = int(ref_lines[i].split("\t")[1])
+        tokens[pos] = "[" + tokens[pos] + "]"
+        probs = [math.exp(float(x)) for x in prob_lines[i].split("\t")[:7]]
+        sum = 0.0
+        for p in probs:
+            sum += p
+        probs = [x / sum for x in probs]
+        f.write(" ".join(tokens) + "\t" + "\t".join([str(x) for x in probs]) + "\n")
+        tokens = ref_lines[i].split("\t")[3].split()
+        pos = int(ref_lines[i].split("\t")[4])
+        tokens[pos] = "[" + tokens[pos] + "]"
+        probs = [math.exp(float(x)) for x in prob_lines[i].split("\t")[7:14]]
+        sum = 0.0
+        for p in probs:
+            sum += p
+        probs = [x / sum for x in probs]
+        f.write(" ".join(tokens) + "\t" + "\t".join([str(x) for x in probs]) + "\n")
+
 
 def get_max_results(file_name):
     evaluator = Evaluator("unit_output.pkl")
@@ -1010,14 +1195,17 @@ def eval_bert_pair_acc():
     print("Accuracy: " + str(float(correct) / float(total)))
 
 
+# eval_combined_pair_data("samples/combine_test/test.formatted.txt", "predictions/bert_combine_test_single_model_2.txt", optimize=False)
+eval_combined_pair_data("samples/combine_test/test.formatted.txt", "bert_logits.txt", optimize=False)
 # eval_bert_pair_acc()
 # train_and_eval()
 # reader = UDReader("samples/UD_English")
 # reader.save_to_file("samples/UD_English_untouched")
-eval_bert_custom()
+# eval_bert_custom()
 # train_and_eval_bert_on_udst()
+# convert_prob_file_pair("predictions/bert_combine_test_combine_model_2.txt", "samples/combine_test/test.formatted.txt", "samples/combine_test/test.visualize.txt")
 # convert_prob_file("bert_logits.txt", "samples/UD_English/test.formatted.txt", "bert_probs_noweight.txt")
-s = 0.0
-for i in range(1):
-    s += get_max_results("samples/UD_English/test.formatted.txt")
-print(s)
+# s = 0.0
+# for i in range(1):
+#     s += get_max_results("samples/UD_English/test.formatted.txt")
+# print(s)

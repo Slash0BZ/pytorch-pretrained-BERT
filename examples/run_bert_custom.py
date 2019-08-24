@@ -126,17 +126,7 @@ class TemporalVerbProcessor(DataProcessor):
 
     def get_labels(self):
         return [
-            "instantaneous",
-            "seconds",
-            "minutes",
-            "hours",
-            "days",
-            "weeks",
-            "months",
-            "years",
-            "decades",
-            "centuries",
-            "forever",
+            # "instantaneous",
             # "seconds",
             # "minutes",
             # "hours",
@@ -144,6 +134,16 @@ class TemporalVerbProcessor(DataProcessor):
             # "weeks",
             # "months",
             # "years",
+            # "decades",
+            # "centuries",
+            # "forever",
+            "seconds",
+            "minutes",
+            "hours",
+            "days",
+            "weeks",
+            "months",
+            "years",
         ]
 
     def plural_units(self, u):
@@ -217,8 +217,8 @@ class TemporalVerbProcessor(DataProcessor):
                         continue
                     label_b, _ = self.normalize_timex(label_b_num, label_b.split()[1].lower())
 
-                # if label_a in ["instantaneous", "decades", "centuries", "forever"] or label_b in ["instantaneous", "decades", "centuries", "forever"]:
-                #     continue
+                if label_a in ["instantaneous", "decades", "centuries", "forever"] or label_b in ["instantaneous", "decades", "centuries", "forever"]:
+                    continue
 
                 examples.append(
                     InputExample(
@@ -237,8 +237,8 @@ class TemporalVerbProcessor(DataProcessor):
                     if label_a_num < 1.0:
                         continue
                     label_a, _ = self.normalize_timex(label_a_num, label_a.split()[1].lower())
-                # if label_a in ["instantaneous", "decades", "centuries", "forever"]:
-                #     continue
+                if label_a in ["instantaneous", "decades", "centuries", "forever"]:
+                    continue
                 examples.append(
                     InputExample(
                         guid=guid, text_a=text_a, text_b=None, label_a=label_a, label_b=None,
@@ -274,13 +274,13 @@ def convert_single_pair(text, target_idx, label, tokenizer, max_seq_length, labe
 
     label_size = len(label_map)
     soft_labels = [0.0] * label_size
-    soft_labels[label_id] = 1.0
-    # label_vector = [0.383, 0.242, 0.06, 0.006, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-    # if label_id != -1:
-    #     for i in range(label_id, len(soft_labels) - 1):
-    #         soft_labels[i] = label_vector[i - label_id]
-    #     for i in range(label_id - 1, -1, -1):
-    #         soft_labels[i] = label_vector[label_id - i]
+    # soft_labels[label_id] = 1.0
+    label_vector = [0.383, 0.242, 0.06, 0.006, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    if label_id != -1:
+        for i in range(label_id, len(soft_labels)):
+            soft_labels[i] = label_vector[i - label_id]
+        for i in range(label_id - 1, -1, -1):
+            soft_labels[i] = label_vector[label_id - i]
 
     adjustment = 1.0
 
@@ -301,6 +301,7 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
         input_ids_a, input_mask_a, segment_ids_a, label_id_a, target_idx_a, adjustment_a, soft_labels_a = convert_single_pair(
             example.text_a, example.target_idx_a, example.label_a, tokenizer, max_seq_length, label_map
         )
+
         if example.text_b is not None:
             input_ids_b, input_mask_b, segment_ids_b, label_id_b, target_idx_b, adjustment_b, soft_labels_b = convert_single_pair(
                 example.text_b, example.target_idx_b, example.label_b, tokenizer, max_seq_length, label_map
@@ -313,6 +314,13 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
             rel_soft_labels[0] = 1.0
         elif example.rel_label == "MORE":
             rel_soft_labels[1] = 1.0
+
+        if ex_index < 100:
+            logger.info("*** Example ***")
+            logger.info("tokens: %s" % " ".join(
+                [str(x) for x in example.text_a.split()]))
+            logger.info("label: %s" % example.label_a)
+            logger.info("soft label: %s" % " ".join(str(x) for x in soft_labels_a))
 
         features.append(
             InputFeatures(
@@ -386,10 +394,10 @@ def weighted_l1_loss(logits, target):
 def weighted_l1_loss_pair(logits, target_a, target_b):
     return weighted_l1_loss(logits.narrow(1, 0, 11), target_a) + weighted_l1_loss(logits.narrow(1, 11, 11), target_b)
 
-def soft_cross_entropy_loss(logits, soft_target_a, adjustment_a, soft_target_b, adjusment_b, rel_soft_targets):
-    logits_a = logits.narrow(1, 0, 11)
-    logits_b = logits.narrow(1, 11, 11)
-    logits_rel = logits.narrow(1, 22, 2)
+def soft_cross_entropy_loss(logits, soft_target_a, adjustment_a, soft_target_b, adjusment_b, rel_soft_targets, num_labels):
+    logits_a = logits.narrow(1, 0, num_labels)
+    logits_b = logits.narrow(1, num_labels, num_labels)
+    logits_rel = logits.narrow(1, 2 * num_labels, 2)
 
     loss_a = -soft_target_a * nn.functional.log_softmax(logits_a, -1)
     loss_a = torch.sum(loss_a, -1)
@@ -401,7 +409,7 @@ def soft_cross_entropy_loss(logits, soft_target_a, adjustment_a, soft_target_b, 
     loss_rel = torch.sum(loss_rel, -1)
     mean_loss = loss_a.mean() + loss_b.mean() + loss_rel.mean()
 
-    return mean_loss
+    return mean_loss, loss_a.mean() + loss_b.mean(), loss_rel.mean()
 
 
 def cross_entropy_loss(loss, logits, rel_soft_targets):
@@ -574,23 +582,23 @@ def main():
 
     # Prepare model
     cache_dir = args.cache_dir if args.cache_dir else os.path.join(str(PYTORCH_PRETRAINED_BERT_CACHE), 'distributed_{}'.format(args.local_rank))
-    model = BertForSingleTokenClassificationFollowTemporal.from_pretrained(args.bert_model,
+    model = BertForSingleTokenClassification.from_pretrained(args.bert_model,
               cache_dir=cache_dir,
               num_labels=num_labels)
     # model.bert.embeddings.requires_grad = False
     # model.bert.encoder.requires_grad = False
     # model.bert.requires_grad = False
     # model.all_attention.requires_grad = False
-    for p in model.bert_temporal.parameters():
-        p.requires_grad = False
-    for p in model.bert.parameters():
-        p.requires_grad = False
-    for p in model.pi_classifier.parameters():
-        p.requires_grad = False
-    for p in model.mu_classifier.parameters():
-        p.requires_grad = False
-    for p in model.sigma_classifier.parameters():
-        p.requires_grad = False
+    # for p in model.bert_temporal.parameters():
+    #     p.requires_grad = False
+    # for p in model.bert.parameters():
+    #    p.requires_grad = False
+    # for p in model.pi_classifier.parameters():
+    #     p.requires_grad = False
+    # for p in model.mu_classifier.parameters():
+    #     p.requires_grad = False
+    # for p in model.sigma_classifier.parameters():
+    #     p.requires_grad = False
 
     if args.fp16:
         model.half()
@@ -675,10 +683,14 @@ def main():
         train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size=args.train_batch_size)
 
         model.train()
+        output_model_file = os.path.join(args.output_dir, "loss_log.txt")
+        f_loss = open(output_model_file, "w")
         for _ in trange(int(args.num_train_epochs), desc="Epoch"):
             tr_loss = 0
             nb_tr_examples, nb_tr_steps = 0, 0
             middle_loss = 0.0
+            middle_label_loss = 0.0
+            middle_rel_loss = 0.0
             for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration")):
                 batch = tuple(t.to(device) for t in batch)
                 input_ids_a, input_mask_a, segment_ids_a, target_ids_a, soft_targets_a, adjustments_a, \
@@ -691,13 +703,15 @@ def main():
                     input_ids_b, segment_ids_b, input_mask_b, target_ids_b,
                 )
 
-                # loss = soft_cross_entropy_loss(
-                #     logits.view(-1, num_labels * 2 + 2), soft_targets_a, adjustments_a, soft_targets_b, adjustments_b, rel_labels
-                # )
-
-                loss = weighted_l1_loss_pair(
-                    logits.view(-1, num_labels * 2 + 2), label_ids_a, label_ids_b
+                loss, label_loss, rel_loss = soft_cross_entropy_loss(
+                    logits.view(-1, num_labels * 2 + 2), soft_targets_a, adjustments_a,
+                    soft_targets_b, adjustments_b,
+                    rel_labels, len(label_list),
                 )
+
+                # loss = weighted_l1_loss_pair(
+                #     logits.view(-1, num_labels * 2 + 2), label_ids_a, label_ids_b
+                # )
 
                 # loss = cross_entropy_loss(
                 #     nn.CrossEntropyLoss(), logits.view(-1, num_labels * 2 + 2), rel_labels
@@ -717,11 +731,18 @@ def main():
 
                 tr_loss += loss.item()
                 middle_loss += loss.item()
+                middle_label_loss += label_loss
+                middle_rel_loss += rel_loss
                 # if step % 1 == 0:
                 #     print(model.bert_temporal.encoder.layer[0].intermediate.dense.weight)
                 if step % 100 == 0:
-                    print("Loss: " + str(middle_loss))
+                    f_loss.write(("Total Loss: " + str(middle_loss)) + "\n")
+                    f_loss.write(("Label Loss: " + str(middle_label_loss)) + "\n")
+                    f_loss.write(("Rel Loss: " + str(middle_rel_loss)) + "\n")
+                    f_loss.flush()
                     middle_loss = 0.0
+                    middle_label_loss = 0.0
+                    middle_rel_loss = 0.0
                 nb_tr_examples += input_ids_a.size(0) * 2
                 nb_tr_steps += 1
                 if step % 1000 == 0:
@@ -758,64 +779,12 @@ def main():
 
         # Load a trained model and config that you have fine-tuned
         config = BertConfig(output_config_file)
-        model = BertForSingleTokenClassificationFollowTemporal(config, num_labels=num_labels)
+        model = BertForSingleTokenClassification(config, num_labels=num_labels)
         model.load_state_dict(torch.load(output_model_file))
     else:
-        model = BertForSingleTokenClassificationFollowTemporal.from_pretrained(args.bert_model, num_labels=num_labels)
+        model = BertForSingleTokenClassification.from_pretrained(args.bert_model, num_labels=num_labels)
     model.to(device)
 
-    if args.do_eval and (args.local_rank == -1 or torch.distributed.get_rank() == 0):
-        eval_examples = processor.get_dev_examples(args.data_dir)
-        eval_features = convert_examples_to_features(
-            eval_examples, label_list, args.max_seq_length, tokenizer, output_mode)
-        logger.info("***** Running evaluation *****")
-        logger.info("  Num examples = %d", len(eval_examples))
-        logger.info("  Batch size = %d", args.eval_batch_size)
-        all_input_ids = torch.tensor([f.input_ids_a for f in eval_features], dtype=torch.long)
-        all_input_mask = torch.tensor([f.input_mask_a for f in eval_features], dtype=torch.long)
-        all_segment_ids = torch.tensor([f.segment_ids_a for f in eval_features], dtype=torch.long)
-        all_target_idxs = torch.tensor([f.target_idx_a for f in eval_features], dtype=torch.long)
-
-        eval_data = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_target_idxs)
-        # Run prediction for full data
-        eval_sampler = SequentialSampler(eval_data)
-        eval_dataloader = DataLoader(eval_data, sampler=eval_sampler, batch_size=args.eval_batch_size)
-
-        model.eval()
-        eval_loss = 0
-        nb_eval_steps = 0
-        preds = []
-
-        f_out = open("./bert_logits.txt", "w")
-        for input_ids, input_mask, segment_ids, target_idxs in tqdm(eval_dataloader, desc="Evaluating"):
-            input_ids = input_ids.to(device)
-            input_mask = input_mask.to(device)
-            segment_ids = segment_ids.to(device)
-            target_idxs = target_idxs.to(device)
-
-            with torch.no_grad():
-                logits = model.get_single_inference(input_ids, segment_ids, input_mask, target_idxs)
-
-            w_ready_logits = logits.detach().cpu().numpy()
-            for l in w_ready_logits:
-                ll = l[0]
-                s = ""
-                for lll in ll:
-                    s += str(lll) + "\t"
-                f_out.write(s + "\n")
-            nb_eval_steps += 1
-            if len(preds) == 0:
-                preds.append(logits.detach().cpu().numpy())
-            else:
-                preds[0] = np.append(
-                    preds[0], logits.detach().cpu().numpy(), axis=0)
-
-        eval_loss = eval_loss / nb_eval_steps
-        loss = tr_loss/nb_tr_steps if args.do_train else None
-
-    """
-    For pair evaluation
-    """
     # if args.do_eval and (args.local_rank == -1 or torch.distributed.get_rank() == 0):
     #     eval_examples = processor.get_dev_examples(args.data_dir)
     #     eval_features = convert_examples_to_features(
@@ -823,29 +792,12 @@ def main():
     #     logger.info("***** Running evaluation *****")
     #     logger.info("  Num examples = %d", len(eval_examples))
     #     logger.info("  Batch size = %d", args.eval_batch_size)
+    #     all_input_ids = torch.tensor([f.input_ids_a for f in eval_features], dtype=torch.long)
+    #     all_input_mask = torch.tensor([f.input_mask_a for f in eval_features], dtype=torch.long)
+    #     all_segment_ids = torch.tensor([f.segment_ids_a for f in eval_features], dtype=torch.long)
+    #     all_target_idxs = torch.tensor([f.target_idx_a for f in eval_features], dtype=torch.long)
     #
-    #     all_input_ids_a = torch.tensor([f.input_ids_a for f in eval_features], dtype=torch.long)
-    #     all_input_mask_a = torch.tensor([f.input_mask_a for f in eval_features], dtype=torch.long)
-    #     all_segment_ids_a = torch.tensor([f.segment_ids_a for f in eval_features], dtype=torch.long)
-    #     all_target_idxs_a = torch.tensor([f.target_idx_a for f in eval_features], dtype=torch.long)
-    #     all_soft_targets_a = torch.tensor([f.soft_target_a for f in eval_features], dtype=torch.float)
-    #     all_adjustments_a = torch.tensor([f.adjustment_a for f in eval_features], dtype=torch.float)
-    #
-    #     all_input_ids_b = torch.tensor([f.input_ids_b for f in eval_features], dtype=torch.long)
-    #     all_input_mask_b = torch.tensor([f.input_mask_b for f in eval_features], dtype=torch.long)
-    #     all_segment_ids_b = torch.tensor([f.segment_ids_b for f in eval_features], dtype=torch.long)
-    #     all_target_idxs_b = torch.tensor([f.target_idx_b for f in eval_features], dtype=torch.long)
-    #     all_soft_targets_b = torch.tensor([f.soft_target_b for f in eval_features], dtype=torch.float)
-    #     all_adjustments_b = torch.tensor([f.adjustment_b for f in eval_features], dtype=torch.float)
-    #
-    #     all_rel_labels = torch.tensor([f.rel_soft_target for f in eval_features], dtype=torch.float)
-    #
-    #     eval_data = TensorDataset(
-    #         all_input_ids_a, all_input_mask_a, all_segment_ids_a, all_target_idxs_a, all_soft_targets_a, all_adjustments_a,
-    #         all_input_ids_b, all_input_mask_b, all_segment_ids_b, all_target_idxs_b, all_soft_targets_b, all_adjustments_b,
-    #         all_rel_labels
-    #     )
-    #
+    #     eval_data = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_target_idxs)
     #     # Run prediction for full data
     #     eval_sampler = SequentialSampler(eval_data)
     #     eval_dataloader = DataLoader(eval_data, sampler=eval_sampler, batch_size=args.eval_batch_size)
@@ -856,16 +808,14 @@ def main():
     #     preds = []
     #
     #     f_out = open("./bert_logits.txt", "w")
-    #     for batch in tqdm(eval_dataloader, desc="Evaluating"):
-    #         batch = tuple(t.to(device) for t in batch)
-    #         input_ids_a, input_mask_a, segment_ids_a, target_ids_a, soft_targets_a, adjustments_a, \
-    #         input_ids_b, input_mask_b, segment_ids_b, target_ids_b, soft_targets_b, adjustments_b, rel_labels = batch
+    #     for input_ids, input_mask, segment_ids, target_idxs in tqdm(eval_dataloader, desc="Evaluating"):
+    #         input_ids = input_ids.to(device)
+    #         input_mask = input_mask.to(device)
+    #         segment_ids = segment_ids.to(device)
+    #         target_idxs = target_idxs.to(device)
     #
     #         with torch.no_grad():
-    #             logits = model(
-    #                 input_ids_a, segment_ids_a, input_mask_a, target_ids_a,
-    #                 input_ids_b, segment_ids_b, input_mask_b, target_ids_b,
-    #             )
+    #             logits = model.get_single_inference(input_ids, segment_ids, input_mask, target_idxs)
     #
     #         w_ready_logits = logits.detach().cpu().numpy()
     #         for l in w_ready_logits:
@@ -883,6 +833,77 @@ def main():
     #
     #     eval_loss = eval_loss / nb_eval_steps
     #     loss = tr_loss/nb_tr_steps if args.do_train else None
+
+    """
+    For pair evaluation
+    """
+    if args.do_eval and (args.local_rank == -1 or torch.distributed.get_rank() == 0):
+        eval_examples = processor.get_dev_examples(args.data_dir)
+        eval_features = convert_examples_to_features(
+            eval_examples, label_list, args.max_seq_length, tokenizer, output_mode)
+        logger.info("***** Running evaluation *****")
+        logger.info("  Num examples = %d", len(eval_examples))
+        logger.info("  Batch size = %d", args.eval_batch_size)
+
+        all_input_ids_a = torch.tensor([f.input_ids_a for f in eval_features], dtype=torch.long)
+        all_input_mask_a = torch.tensor([f.input_mask_a for f in eval_features], dtype=torch.long)
+        all_segment_ids_a = torch.tensor([f.segment_ids_a for f in eval_features], dtype=torch.long)
+        all_target_idxs_a = torch.tensor([f.target_idx_a for f in eval_features], dtype=torch.long)
+        all_soft_targets_a = torch.tensor([f.soft_target_a for f in eval_features], dtype=torch.float)
+        all_adjustments_a = torch.tensor([f.adjustment_a for f in eval_features], dtype=torch.float)
+
+        all_input_ids_b = torch.tensor([f.input_ids_b for f in eval_features], dtype=torch.long)
+        all_input_mask_b = torch.tensor([f.input_mask_b for f in eval_features], dtype=torch.long)
+        all_segment_ids_b = torch.tensor([f.segment_ids_b for f in eval_features], dtype=torch.long)
+        all_target_idxs_b = torch.tensor([f.target_idx_b for f in eval_features], dtype=torch.long)
+        all_soft_targets_b = torch.tensor([f.soft_target_b for f in eval_features], dtype=torch.float)
+        all_adjustments_b = torch.tensor([f.adjustment_b for f in eval_features], dtype=torch.float)
+
+        all_rel_labels = torch.tensor([f.rel_soft_target for f in eval_features], dtype=torch.float)
+
+        eval_data = TensorDataset(
+            all_input_ids_a, all_input_mask_a, all_segment_ids_a, all_target_idxs_a, all_soft_targets_a, all_adjustments_a,
+            all_input_ids_b, all_input_mask_b, all_segment_ids_b, all_target_idxs_b, all_soft_targets_b, all_adjustments_b,
+            all_rel_labels
+        )
+
+        # Run prediction for full data
+        eval_sampler = SequentialSampler(eval_data)
+        eval_dataloader = DataLoader(eval_data, sampler=eval_sampler, batch_size=args.eval_batch_size)
+
+        model.eval()
+        eval_loss = 0
+        nb_eval_steps = 0
+        preds = []
+
+        f_out = open("./bert_logits.txt", "w")
+        for batch in tqdm(eval_dataloader, desc="Evaluating"):
+            batch = tuple(t.to(device) for t in batch)
+            input_ids_a, input_mask_a, segment_ids_a, target_ids_a, soft_targets_a, adjustments_a, \
+            input_ids_b, input_mask_b, segment_ids_b, target_ids_b, soft_targets_b, adjustments_b, rel_labels = batch
+
+            with torch.no_grad():
+                logits = model(
+                    input_ids_a, segment_ids_a, input_mask_a, target_ids_a,
+                    input_ids_b, segment_ids_b, input_mask_b, target_ids_b,
+                )
+
+            w_ready_logits = logits.detach().cpu().numpy()
+            for l in w_ready_logits:
+                ll = l[0]
+                s = ""
+                for lll in ll:
+                    s += str(lll) + "\t"
+                f_out.write(s + "\n")
+            nb_eval_steps += 1
+            if len(preds) == 0:
+                preds.append(logits.detach().cpu().numpy())
+            else:
+                preds[0] = np.append(
+                    preds[0], logits.detach().cpu().numpy(), axis=0)
+
+        eval_loss = eval_loss / nb_eval_steps
+        loss = tr_loss/nb_tr_steps if args.do_train else None
 
 
 if __name__ == "__main__":

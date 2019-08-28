@@ -44,16 +44,16 @@ class VerbPhysicsClassification(nn.Module):
         self.glove_classifier_1 = nn.Linear(glove_size, 32)
         self.glove_classifier_2 = nn.Linear(glove_size, 32)
 
-        self.classifier_duration = nn.Linear(self.hidden_size * 2, 16)
-        self.classifier_glove = nn.Linear(64, 16)
+        self.classifier_duration = nn.Linear(self.hidden_size * 2, num_labels)
+        self.classifier_glove = nn.Linear(64, num_labels)
 
-        self.classifier_dim = nn.Linear(glove_size, 1)
+        self.classifier_dim = nn.Linear(glove_size, num_labels)
 
-        self.classifier = nn.Linear(32, num_labels)
+        self.classifier = nn.Linear(num_labels * 2, num_labels)
 
     def forward(self, input_1s, input_2s, embedding_1s, embedding_2s, dim_embeds, labels=None):
-        state_1 = F.relu(self.classifier_1(self.dropout(input_1s)))
-        state_2 = F.relu(self.classifier_2(self.dropout(input_2s)))
+        state_1 = F.relu(self.classifier_1(input_1s))
+        state_2 = F.relu(self.classifier_2(input_2s))
         state = torch.cat((state_1, state_2), dim=1)
         state = self.classifier_duration(state)
 
@@ -109,7 +109,7 @@ class Runner:
         # if os.path.isfile("./glove_cache.pkl"):
         #     self.glove_model = FakeGlove(pickle.load(open("./glove_cache.pkl", "rb")))
         # else:
-        # self.glove_model = gensim.models.KeyedVectors.load_word2vec_format("data/glove_model.txt", binary=False)
+        self.glove_model = gensim.models.KeyedVectors.load_word2vec_format("data/glove_model.txt", binary=False)
         self.embedding = pickle.load(open(embedding_file, "rb"))
         self.cache_glove_map = {}
         self.train_data = self.load_data_file(train_data)
@@ -151,12 +151,12 @@ class Runner:
             glove_1 = [0] * self.glove_size
             glove_2 = [0] * self.glove_size
 
-            # if obj_1 in self.glove_model.vocab:
-            #     glove_1 = list(self.glove_model.get_vector(obj_1))
-            #     self.cache_glove_map[obj_1] = glove_1
-            # if obj_2 in self.glove_model.vocab:
-            #     glove_2 = list(self.glove_model.get_vector(obj_2))
-            #     self.cache_glove_map[obj_2] = glove_2
+            if obj_1 in self.glove_model.vocab:
+                glove_1 = list(self.glove_model.get_vector(obj_1))
+                # self.cache_glove_map[obj_1] = glove_1
+            if obj_2 in self.glove_model.vocab:
+                glove_2 = list(self.glove_model.get_vector(obj_2))
+                # self.cache_glove_map[obj_2] = glove_2
 
             instance = self.Instance(
                 self.embedding[obj_1], self.embedding[obj_2],
@@ -332,10 +332,10 @@ if __name__ == "__main__":
         # train_data="samples/verbphysics/train-5/train.csv",
         # dev_data="samples/verbphysics/train-5/dev.csv",
         # test_data="samples/verbphysics/train-5/test.csv",
-        train_data="samples/vp_clean/new_data/train.csv",
-        dev_data="samples/vp_clean/new_data/dev.csv",
-        test_data="samples/vp_clean/new_data/test.csv",
-        embedding_file="samples/vp_clean/new_data/obj_embedding_100v_mean_33.pkl"
+        train_data="samples/vp_clean/reannotations/train.csv",
+        dev_data="samples/vp_clean/reannotations/dev.csv",
+        test_data="samples/vp_clean/reannotations/test.csv",
+        embedding_file="samples/vp_clean/reannotations/obj_embedding_100v_mean.pkl"
     )
     runner.train(epoch=5000, batch_size=16)
     runner.eval(runner.dev_data)

@@ -1,5 +1,6 @@
 import matplotlib.pyplot as plt
 
+
 class LossVisualizer:
 
     def __init__(self, file_path):
@@ -15,7 +16,7 @@ class LossVisualizer:
                 self.value_map[title] = []
             raw = line.split(":")[1]
             if "tensor" in raw:
-                number = float(raw[8:15].split(",")[0])
+                number = float(raw[8:14].split(",")[0])
             else:
                 number = float(raw[1:])
             self.value_map[title].append(number)
@@ -30,6 +31,13 @@ class LossVisualizer:
 # visualizer = LossVisualizer("bert_classification_only_continue/loss_log.txt")
 # visualizer = LossVisualizer("bert_classification/loss_log.txt")
 # visualizer = LossVisualizer("bert_comparison/loss_log.txt")
-visualizer = LossVisualizer("bert_comb/loss_log.txt")
+# visualizer = LossVisualizer("bert_comb/loss_log.txt")
+# visualizer = LossVisualizer("bert_comb_conceptnet/loss_log.txt")
+# visualizer = LossVisualizer("bert_comb_dummy_1e4_40/loss_log.txt")
+# visualizer = LossVisualizer("bert_comb_dummy/loss_log.txt")
+# visualizer = LossVisualizer("bert_comb_clip_high_e/loss_log.txt")
+visualizer = LossVisualizer("bert_conceptnet_2k/loss_log.txt")
+
 # visualizer = LossVisualizer("loss_log.txt")
-visualizer.visualize("Rel Loss")
+visualizer.visualize("Total Loss")
+

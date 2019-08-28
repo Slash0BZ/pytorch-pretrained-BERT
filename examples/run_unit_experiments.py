@@ -727,16 +727,119 @@ def get_optimal_prediction(evaluator, prob_map):
 
 
 def get_unit_map(scores, label_list):
+    # normalize_map = {'seconds': 6269, 'minutes': 36033, 'hours': 35158, 'days': 42898, 'weeks': 53334, 'months': 90745, 'years': 352289}
+    normalize_map = {'seconds': 1, 'minutes': 1, 'hours': 1, 'days': 1, 'weeks': 1, 'months': 1, 'years': 1}
     unit_prob_map = {}
     for i, key in enumerate(label_list):
         unit_prob_map[key] = scores[i]
     ksum = 0.0
     for key in unit_prob_map:
-        ksum += math.exp(float(unit_prob_map[key]))
+        ksum += math.exp(float(unit_prob_map[key])) / normalize_map[key]
     for key in unit_prob_map:
-        unit_prob_map[key] = math.exp(float(unit_prob_map[key])) / ksum
+        unit_prob_map[key] = math.exp(float(unit_prob_map[key])) / normalize_map[key] / ksum
     unit_map = sorted(unit_prob_map.items(), key=lambda x: x[1], reverse=True)
     return unit_map
+
+
+def get_normalized(scores):
+    ret = []
+    ksum = 0.0
+    for val in scores:
+        ksum += math.exp(float(val))
+    for val in scores:
+        ret.append(math.exp(val) / ksum)
+    return ret
+
+
+def compare_predictions(gold_path, prediction_a, prediction_b):
+    duration_keys_ordered = [
+        "seconds",
+        "minutes",
+        "hours",
+        "days",
+        "weeks",
+        "months",
+        "years",
+    ]
+    distance_map = {
+        "seconds": 0,
+        "minutes": 1,
+        "hours": 2,
+        "days": 3,
+        "weeks": 4,
+        "months": 5,
+        "years": 6,
+    }
+    gold_lines = [x.strip() for x in open(gold_path).readlines()]
+    filtered_gold_lines = []
+    evaluator = Evaluator("unit_exp_output.pkl")
+    reader = DataReader("temp.txt")
+    for line in gold_lines:
+        groups = line.split("\t")
+        if groups[2] == "NONE":
+            filtered_gold_lines.append(line)
+            continue
+        if len(groups[0].split()) > 120 or len(groups[3].split()) > 120:
+            continue
+        label_a = groups[2].lower()
+        label_a_num = float(label_a.split()[0])
+        if label_a_num < 1.0:
+            continue
+        label_a, _ = reader.normalize_timex(label_a_num, label_a.split()[1].lower())
+        label_b = groups[5].lower()
+        label_b_num = float(label_b.split()[0])
+        if label_b_num < 1.0:
+            continue
+        label_b, _ = reader.normalize_timex(label_b_num, label_b.split()[1].lower())
+        if label_a in ["instantaneous", "decades", "centuries", "forever"] or label_b in ["instantaneous", "decades", "centuries", "forever"]:
+            continue
+        filtered_gold_lines.append(line)
+    gold_lines = filtered_gold_lines
+
+    logits_a = [x.strip() for x in open(prediction_a).readlines()]
+    logits_b = [x.strip() for x in open(prediction_b).readlines()]
+    assert(len(gold_lines) == len(logits_a))
+    assert(len(gold_lines) == len(logits_b))
+
+    for i in range(0, len(gold_lines)):
+        groups = gold_lines[i].split("\t")
+        label_a = groups[2].lower()
+        label_b = groups[5].lower()
+
+        scores_a = [float(x) for x in logits_a[i].split("\t")]
+        scores_b = [float(x) for x in logits_b[i].split("\t")]
+
+        if label_a == "none":
+            continue
+        else:
+            val_a = float(label_a.split()[0])
+            unit_a = label_a.split()[1]
+            label_a, _ = reader.normalize_timex(val_a, unit_a)
+            val_b = float(label_b.split()[0])
+            unit_b = label_b.split()[1]
+            label_b, _ = reader.normalize_timex(val_b, unit_b)
+            prediction_map_a_by_a = get_unit_map(scores_a[0:7], duration_keys_ordered)
+            prediction_map_b_by_a = get_unit_map(scores_a[7:14], duration_keys_ordered)
+            prediction_map_a_by_b = get_unit_map(scores_b[0:7], duration_keys_ordered)
+            prediction_map_b_by_b = get_unit_map(scores_b[7:14], duration_keys_ordered)
+            for _, (p, _) in enumerate(prediction_map_a_by_a):
+                prediction_a_by_a = p
+                break
+            for _, (p, _) in enumerate(prediction_map_b_by_a):
+                prediction_b_by_a = p
+                break
+            for _, (p, _) in enumerate(prediction_map_a_by_b):
+                prediction_a_by_b = p
+                break
+            for _, (p, _) in enumerate(prediction_map_b_by_b):
+                prediction_b_by_b = p
+                break
+            tokens_a = groups[0].split()
+            tokens_a[int(groups[1])] = "[" + tokens_a[int(groups[1])] + "]"
+            tokens_b = groups[3].split()
+            tokens_b[int(groups[4])] = "[" + tokens_b[int(groups[4])] + "]"
+            print(" ".join(tokens_a) + "\t" + label_a + "\t" + prediction_a_by_a + "\t" + prediction_a_by_b + "\n")
+            print(" ".join(tokens_b) + "\t" + label_b + "\t" + prediction_b_by_a + "\t" + prediction_b_by_b + "\n")
 
 
 def eval_combined_pair_data(gold_path, predict_logits, optimize=True):
@@ -852,10 +955,11 @@ def eval_combined_pair_data(gold_path, predict_logits, optimize=True):
             classification_distance += float(abs(distance_map[label_a] - distance_map[prediction_a]))
             classification_distance += float(abs(distance_map[label_b] - distance_map[prediction_b]))
             classification_total += 2.0
-
-    print("Pairwise Acc.: " + str(pair_correct / pair_total))
-    print("Classification Dist.: " + str(classification_distance / classification_total))
-    print(count_map)
+    if pair_total != 0.0:
+        print("Pairwise Acc.: " + str(pair_correct / pair_total))
+    if classification_total != 0.0:
+        print("Classification Dist.: " + str(classification_distance / classification_total))
+    print(pair_total)
     print(prediction_count_map)
 
 
@@ -1129,14 +1233,15 @@ def get_max_results(file_name):
             pass
             # continue
         if "instantaneous" in predictions or "decades" in predictions or "centuries" in predictions or "forever" in predictions:
-            pass
-            # continue
-        # prediction = random.choice(predictions)
+            # pass
+            continue
+        prediction_random = random.choice(predictions)
         d_min = 100
         acc_max = 0.0
         acc_cur_total = 0.0
         acc_cur_correct = 0.0
         for prediction in evaluator.duration_val_full.keys():
+            prediction = prediction_random
             d_current = 0.0
             acc_correct = 0.0
             acc_total = 0.0
@@ -1163,6 +1268,7 @@ def get_max_results(file_name):
     print(counter)
     print(correct / total)
     return float(distance) / counter
+
 
 def eval_bert_pair_acc():
     prediction_lines = [x.strip() for x in open("bert_logits.txt").readlines()]
@@ -1195,8 +1301,129 @@ def eval_bert_pair_acc():
     print("Accuracy: " + str(float(correct) / float(total)))
 
 
-# eval_combined_pair_data("samples/combine_test/test.formatted.txt", "predictions/bert_combine_test_single_model_2.txt", optimize=False)
-eval_combined_pair_data("samples/combine_test/test.formatted.txt", "bert_logits.txt", optimize=False)
+class HTMLFormatter:
+
+    def __init__(self, ref_file, prediction_a, prediction_b):
+        self.gold_path = ref_file
+        self.prediction_a = prediction_a
+        self.prediction_b = prediction_b
+
+    def process(self, output_file):
+        html = "<html><body>"
+        seen = set()
+        duration_keys_ordered = [
+            "seconds",
+            "minutes",
+            "hours",
+            "days",
+            "weeks",
+            "months",
+            "years",
+        ]
+        gold_lines = [x.strip() for x in open(self.gold_path).readlines()]
+        filtered_gold_lines = []
+        reader = DataReader("temp.txt")
+        label_map = {}
+        for line in gold_lines:
+            groups = line.split("\t")
+            if groups[2] == "NONE":
+                filtered_gold_lines.append(line)
+                continue
+            if len(groups[0].split()) > 120 or len(groups[3].split()) > 120:
+                continue
+            label_a = groups[2].lower()
+            label_a_num = float(label_a.split()[0])
+            if label_a_num < 1.0:
+                continue
+            label_a, _ = reader.normalize_timex(label_a_num, label_a.split()[1].lower())
+            label_b = groups[5].lower()
+            label_b_num = float(label_b.split()[0])
+            if label_b_num < 1.0:
+                continue
+            label_b, _ = reader.normalize_timex(label_b_num, label_b.split()[1].lower())
+            if label_a in ["instantaneous", "decades", "centuries", "forever"] or label_b in ["instantaneous", "decades", "centuries", "forever"]:
+                continue
+            filtered_gold_lines.append(line)
+            key = groups[0] + groups[1]
+            if key not in label_map:
+                label_map[key] = []
+            label_map[key].append(label_a)
+            key = groups[3] + groups[4]
+            if key not in label_map:
+                label_map[key] = []
+            label_map[key].append(label_b)
+        gold_lines = filtered_gold_lines
+
+        logits_a = [x.strip() for x in open(self.prediction_a).readlines()]
+        logits_b = [x.strip() for x in open(self.prediction_b).readlines()]
+        assert (len(gold_lines) == len(logits_a))
+        assert (len(gold_lines) == len(logits_b))
+
+        f_out = open(output_file, "w")
+        for i in range(0, len(gold_lines)):
+            groups = gold_lines[i].split("\t")
+            label_a = groups[2].lower()
+            label_b = groups[5].lower()
+
+            scores_a = [float(x) for x in logits_a[i].split("\t")]
+            scores_b = [float(x) for x in logits_b[i].split("\t")]
+
+            if label_a == "none":
+                continue
+            else:
+                val_a = float(label_a.split()[0])
+                unit_a = label_a.split()[1]
+                label_a, _ = reader.normalize_timex(val_a, unit_a)
+                val_b = float(label_b.split()[0])
+                unit_b = label_b.split()[1]
+                label_b, _ = reader.normalize_timex(val_b, unit_b)
+                prediction_map_a_by_a = get_unit_map(scores_a[0:7], duration_keys_ordered)
+                prediction_map_b_by_a = get_unit_map(scores_a[7:14], duration_keys_ordered)
+                prediction_map_a_by_b = get_unit_map(scores_b[0:7], duration_keys_ordered)
+                prediction_map_b_by_b = get_unit_map(scores_b[7:14], duration_keys_ordered)
+                for _, (p, _) in enumerate(prediction_map_a_by_a):
+                    prediction_a_by_a = p
+                    break
+                for _, (p, _) in enumerate(prediction_map_b_by_a):
+                    prediction_b_by_a = p
+                    break
+                for _, (p, _) in enumerate(prediction_map_a_by_b):
+                    prediction_a_by_b = p
+                    break
+                for _, (p, _) in enumerate(prediction_map_b_by_b):
+                    prediction_b_by_b = p
+                    break
+                tokens_a = groups[0].split()
+                tokens_a[int(groups[1])] = "<font color='red'>" + tokens_a[int(groups[1])] + "</font>"
+                tokens_b = groups[3].split()
+                tokens_b[int(groups[4])] = "<font color='red'>" + tokens_b[int(groups[4])] + "</font>"
+
+                cur_html = ""
+                cur_html += "<h4>" + " ".join(tokens_a) + "</h4>"
+                cur_html += "<h5>UDST Annotation: " + str(label_map[groups[0] + groups[1]]) + "</h5>"
+                cur_html += "<h5>Our Joint Model: " + str(prediction_map_a_by_a) + "</h5>"
+                # cur_html += "<h5>" + str(prediction_map_a_by_b) + "</h5>"
+                if cur_html not in seen:
+                    html += cur_html
+                    seen.add(cur_html)
+
+                cur_html = ""
+                cur_html += "<h4>" + " ".join(tokens_b) + "</h4>"
+                cur_html += "<h5>UDST Annotation: " + str(label_map[groups[3] + groups[4]]) + "</h5>"
+                cur_html += "<h5>Our Joint Model: " + str(prediction_map_b_by_a) + "</h5>"
+                # cur_html += "<h5>" + str(prediction_map_b_by_b) + "</h5>"
+                if cur_html not in seen:
+                    html += cur_html
+                    seen.add(cur_html)
+        f_out.write(html + "\n")
+
+
+# eval_combined_pair_data("samples/UD_English_SRL/test.formatted.txt", "predictions/best_joint_on_udst.txt", optimize=False)
+# eval_combined_pair_data("samples/UD_English_SRL/test.formatted.txt", "bert_selection/bert_logits.txt", optimize=False)
+eval_combined_pair_data("samples/conceptnet/test.formatted.txt", "bert_logits.txt", optimize=False)
+# compare_predictions("samples/UD_English_SRL/test.formatted.txt",
+#                     "bert_logits.txt",
+#                     "predictions/bert_udst_finetune_classification.txt")
 # eval_bert_pair_acc()
 # train_and_eval()
 # reader = UDReader("samples/UD_English")
@@ -1206,6 +1433,9 @@ eval_combined_pair_data("samples/combine_test/test.formatted.txt", "bert_logits.
 # convert_prob_file_pair("predictions/bert_combine_test_combine_model_2.txt", "samples/combine_test/test.formatted.txt", "samples/combine_test/test.visualize.txt")
 # convert_prob_file("bert_logits.txt", "samples/UD_English/test.formatted.txt", "bert_probs_noweight.txt")
 # s = 0.0
-# for i in range(1):
-#     s += get_max_results("samples/UD_English/test.formatted.txt")
+# for i in range(100):
+#     s += get_max_results("samples/UD_English/test.srl.formatted.txt")
 # print(s)
+
+# formatter = HTMLFormatter("samples/UD_English_SRL/test.formatted.txt", "predictions/best_joint_on_udst.txt", "bert_vanilla/bert_logits.txt",)
+# formatter.process("sample.html")

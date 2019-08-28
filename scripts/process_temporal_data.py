@@ -1894,7 +1894,7 @@ class VerbPhysicsEval:
 
         verbs = verbs_100
         pronouns = ["he", "they", "I", "she"]
-        rest = "\t1\t1.0 hour\t0\t1\t2\t3\t-1\t-1\n"
+        rest = "\t1\t1.0 hour\twalk\t0\t1.0 hour\tNONE\n"
         f_out = open(out_path, "w")
         for obj in obj_set:
             for v in verbs:
@@ -1913,11 +1913,12 @@ class VerbPhysicsEval:
         return a
 
     def process_embedding_file(self, sent_path, embed_path):
+        import math
         sent_lines = [x.strip() for x in open(sent_path).readlines()]
         embed_lines = [x.strip() for x in open(embed_path).readlines()]
 
         obj_map = {}
-        for i, l, in enumerate(sent_lines):
+        for i, l in enumerate(sent_lines):
             sent = l.split("\t")[0]
             obj = sent.split()[2]
             verb = sent.split()[1]
@@ -1927,7 +1928,12 @@ class VerbPhysicsEval:
             if verb not in obj_map[obj]:
                 obj_map[obj][verb] = 0.0
 
-            embed = float(embed_lines[i])
+            probs = [math.exp(float(x)) for x in embed_lines[i].split('\t')[0:7]]
+            prob_sum = sum(probs)
+            probs = [x / float(prob_sum) for x in probs]
+            vector = [float(x) * float(i) for i, x in enumerate(probs)]
+            mean = sum(vector)
+            embed = mean
             obj_map[obj][verb] += embed
 
         # verbs = ["clean", "make", "build", "use", "move"]
@@ -1941,7 +1947,7 @@ class VerbPhysicsEval:
         #     "climb", "dig", "stack", "shake", "ride",
         # ]
         verbs = ["be", "hold", "play", "have", "go", "work", "make", "take", "wait", "do", "live", "stay", "run", "lose", "kill", "win", "come", "see", "keep", "get", "rise", "suspend", "leave", "score", "meet", "fall", "pay", "remain", "spend", "sell", "increase", "serve", "cook", "put", "grow", "cut", "give", "close", "double", "receive", "sit", "become", "raise", "detain", "use", "complete", "return", "continue", "try", "hit", "open", "begin", "reach", "send", "drop", "fight", "die", "say", "start", "move", "turn", "build", "lead", "delay", "change", "bring", "speak", "miss", "provide", "ban", "stand", "set", "find", "finish", "reduce", "expect", "report", "jail", "beat", "talk", "happen", "sideline", "add", "simmer", "face", "sign", "invest", "show", "visit", "buy", "look", "stop", "know", "shut", "cost", "drive", "carry", "decide", "save", "bake"]
-        embedding_file = open("samples/vp_clean/new_data/obj_embedding_100v_mean_33.pkl", "wb")
+        embedding_file = open("samples/vp_clean/reannotations/obj_embedding_100v_mean.pkl", "wb")
         embed_map = {}
         for key in obj_map:
             if key not in embed_map:
@@ -1950,6 +1956,7 @@ class VerbPhysicsEval:
                 embed_map[key].append(obj_map[key][v] / 4.0)
 
         pickle.dump(embed_map, embedding_file)
+
 
     def read_instances(self, file_name):
         instances = []
@@ -2035,8 +2042,8 @@ if __name__ == "__main__":
     # extractor.get_rid_of_masks("samples/duration/verb_formatted_all_svo_better_filter_4.txt", "samples/duration/verb_formatted_all_svo_better_filter_4.txt")
     # extractor.get_rid_of_masks("samples/duration/all/nominals_formatted.txt", "samples/duration/all/nominals_formatted_train.txt")
 
-    baseline = VerbBaseline("samples/duration/all/verbs.txt")
-    baseline.find_distribution_raw()
+    # baseline = VerbBaseline("samples/duration/all/verbs.txt")
+    # baseline.find_distribution_raw()
     # baseline.process("samples/duration/all/nearest_verb_cont/partition_")
     # VerbBaseline.merge_map("samples/duration/all/nearest_verb_all/partition_", "samples/duration/all/nearest_verb.pkl")
     # VerbBaseline.exp_output("samples/duration/all/nearest_verb.pkl", "work")
@@ -2050,12 +2057,12 @@ if __name__ == "__main__":
     # baseline.find_distribution()
     # baseline.test_file("samples/duration/all/nearest_verb.pkl", "samples/duration/timebank_formatted.txt")
 
-    # verbphysics = VerbPhysicsEval()
+    verbphysics = VerbPhysicsEval()
     # verbphysics.process_raw_file([
-    #     "samples/vp_clean/new_data/train.csv",
-    #     "samples/vp_clean/new_data/test.csv",
-    #     "samples/vp_clean/new_data/dev.csv",], "samples/vp_clean/new_data/obj_file_100v.txt")
-    # verbphysics.process_embedding_file("samples/vp_clean/new_data/obj_file_100v.txt", "result_logits.txt")
+    #     "samples/vp_clean/reannotations/train.csv",
+    #     "samples/vp_clean/reannotations/test.csv",
+    #     "samples/vp_clean/reannotations/dev.csv"], "samples/vp_clean/reannotations/obj_file_100v.txt")
+    verbphysics.process_embedding_file("samples/vp_clean/reannotations/obj_file_100v.txt", "bert_vp_eval/bert_logits.txt")
     # verbphysics.process_raw_file([
     #     "samples/verbphysics/train-5/train.csv",
     #     "samples/verbphysics/train-5/test.csv",

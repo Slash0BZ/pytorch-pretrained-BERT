@@ -592,7 +592,7 @@ def main():
     # for p in model.bert_temporal.parameters():
     #     p.requires_grad = False
     # for p in model.bert.parameters():
-    #    p.requires_grad = False
+    #     p.requires_grad = False
     # for p in model.pi_classifier.parameters():
     #     p.requires_grad = False
     # for p in model.mu_classifier.parameters():
@@ -640,7 +640,8 @@ def main():
         optimizer = BertAdam(optimizer_grouped_parameters,
                              lr=args.learning_rate,
                              warmup=args.warmup_proportion,
-                             t_total=num_train_optimization_steps)
+                             t_total=num_train_optimization_steps,
+                             e=1e-4)
 
     global_step = 0
     nb_tr_steps = 0
@@ -684,7 +685,10 @@ def main():
 
         model.train()
         output_model_file = os.path.join(args.output_dir, "loss_log.txt")
-        f_loss = open(output_model_file, "w")
+        f_loss = open(output_model_file, "a")
+        epoch_loss = 0.0
+        epoch_label_loss = 0.0
+        epoch_rel_loss = 0.0
         for _ in trange(int(args.num_train_epochs), desc="Epoch"):
             tr_loss = 0
             nb_tr_examples, nb_tr_steps = 0, 0
@@ -692,6 +696,16 @@ def main():
             middle_label_loss = 0.0
             middle_rel_loss = 0.0
             for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration")):
+
+                if step == 0:
+                    f_loss.write(("Total Loss: " + str(epoch_loss)) + "\n")
+                    f_loss.write(("Label Loss: " + str(epoch_label_loss)) + "\n")
+                    f_loss.write(("Rel Loss: " + str(epoch_rel_loss)) + "\n")
+                    f_loss.flush()
+                    epoch_loss = 0.0
+                    epoch_label_loss = 0.0
+                    epoch_rel_loss = 0.0
+
                 batch = tuple(t.to(device) for t in batch)
                 input_ids_a, input_mask_a, segment_ids_a, target_ids_a, soft_targets_a, adjustments_a, \
                 input_ids_b, input_mask_b, segment_ids_b, target_ids_b, soft_targets_b, adjustments_b, rel_labels, \
@@ -726,6 +740,7 @@ def main():
                     optimizer.backward(loss)
                 else:
                     loss.backward()
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
 
                 # torch.nn.utils.clip_grad_norm_(model.parameters(), 0.25)
 
@@ -733,13 +748,16 @@ def main():
                 middle_loss += loss.item()
                 middle_label_loss += label_loss
                 middle_rel_loss += rel_loss
+                epoch_loss += loss.item()
+                epoch_label_loss += label_loss
+                epoch_rel_loss += rel_loss
                 # if step % 1 == 0:
                 #     print(model.bert_temporal.encoder.layer[0].intermediate.dense.weight)
                 if step % 100 == 0:
-                    f_loss.write(("Total Loss: " + str(middle_loss)) + "\n")
-                    f_loss.write(("Label Loss: " + str(middle_label_loss)) + "\n")
-                    f_loss.write(("Rel Loss: " + str(middle_rel_loss)) + "\n")
-                    f_loss.flush()
+                    # f_loss.write(("Total Loss: " + str(middle_loss)) + "\n")
+                    # f_loss.write(("Label Loss: " + str(middle_label_loss)) + "\n")
+                    # f_loss.write(("Rel Loss: " + str(middle_rel_loss)) + "\n")
+                    # f_loss.flush()
                     middle_loss = 0.0
                     middle_label_loss = 0.0
                     middle_rel_loss = 0.0
@@ -876,7 +894,8 @@ def main():
         nb_eval_steps = 0
         preds = []
 
-        f_out = open("./bert_logits.txt", "w")
+        output_file = os.path.join(args.output_dir, "bert_logits.txt")
+        f_out = open(output_file, "w")
         for batch in tqdm(eval_dataloader, desc="Evaluating"):
             batch = tuple(t.to(device) for t in batch)
             input_ids_a, input_mask_a, segment_ids_a, target_ids_a, soft_targets_a, adjustments_a, \

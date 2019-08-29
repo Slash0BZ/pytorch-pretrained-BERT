@@ -1926,15 +1926,15 @@ class VerbPhysicsEval:
             if obj not in obj_map:
                 obj_map[obj] = {}
             if verb not in obj_map[obj]:
-                obj_map[obj][verb] = 0.0
+                obj_map[obj][verb] = [0.0] * 7
 
             probs = [math.exp(float(x)) for x in embed_lines[i].split('\t')[0:7]]
             prob_sum = sum(probs)
             probs = [x / float(prob_sum) for x in probs]
-            vector = [float(x) * float(i) for i, x in enumerate(probs)]
-            mean = sum(vector)
-            embed = mean
-            obj_map[obj][verb] += embed
+            # vector = [float(x) * float(i) for i, x in enumerate(probs)]
+            # mean = sum(vector)
+            # embed = mean
+            obj_map[obj][verb] = self.add_list(obj_map[obj][verb], probs)
 
         # verbs = ["clean", "make", "build", "use", "move"]
         # verbs = ["clean", "make", "build", "use", "move", "lift", "take", "try", "play", "hold"]
@@ -1947,16 +1947,15 @@ class VerbPhysicsEval:
         #     "climb", "dig", "stack", "shake", "ride",
         # ]
         verbs = ["be", "hold", "play", "have", "go", "work", "make", "take", "wait", "do", "live", "stay", "run", "lose", "kill", "win", "come", "see", "keep", "get", "rise", "suspend", "leave", "score", "meet", "fall", "pay", "remain", "spend", "sell", "increase", "serve", "cook", "put", "grow", "cut", "give", "close", "double", "receive", "sit", "become", "raise", "detain", "use", "complete", "return", "continue", "try", "hit", "open", "begin", "reach", "send", "drop", "fight", "die", "say", "start", "move", "turn", "build", "lead", "delay", "change", "bring", "speak", "miss", "provide", "ban", "stand", "set", "find", "finish", "reduce", "expect", "report", "jail", "beat", "talk", "happen", "sideline", "add", "simmer", "face", "sign", "invest", "show", "visit", "buy", "look", "stop", "know", "shut", "cost", "drive", "carry", "decide", "save", "bake"]
-        embedding_file = open("samples/vp_clean/reannotations/obj_embedding_100v_mean.pkl", "wb")
+        embedding_file = open("samples/vp_clean/reannotations/obj_embedding_100v.pkl", "wb")
         embed_map = {}
         for key in obj_map:
             if key not in embed_map:
                 embed_map[key] = []
             for v in verbs:
-                embed_map[key].append(obj_map[key][v] / 4.0)
+                embed_map[key].extend(self.div_list(obj_map[key][v], 4.0))
 
         pickle.dump(embed_map, embedding_file)
-
 
     def read_instances(self, file_name):
         instances = []

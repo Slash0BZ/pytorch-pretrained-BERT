@@ -346,7 +346,7 @@ class SentenceProcessor:
         seen = set()
         out_lines = []
         for l in lines:
-            if l.split("\t")[2].split(" ")[1] in ["instantaneous", "decades", "centuries", "forever"]:
+            if l.split("\t")[2].split(" ")[1] in ["instantaneous", "forever"]:
                 continue
             key = "\t".join(l.split("\t")[:3])
             if key in seen:
@@ -484,13 +484,13 @@ def format_conceptnet_pairs():
 
 
 def get_srl_input_sentences():
-    lines = [x.strip().split("\t")[0] for x in open("samples/UD_English/train.formatted.txt").readlines()]
-    lines_2 = [x.strip().split("\t")[0] for x in open("samples/UD_English/test.formatted.txt").readlines()]
+    lines = [x.strip().split("\t")[0] for x in open("samples/duration/timebank_svo.txt").readlines()]
+    # lines_2 = [x.strip().split("\t")[0] for x in open("samples/UD_English/test.formatted.txt").readlines()]
     print(len(lines))
-    lines.extend(lines_2)
-    print(len(lines))
+    # lines.extend(lines_2)
+    # print(len(lines))
     lines = list(set(lines))
-    f_out = open("samples/UD_English/to_srl.txt", "w")
+    f_out = open("samples/duration/timebank_to_srl.txt", "w")
     for l in lines:
         f_out.write(l + "\n")
 
@@ -514,7 +514,7 @@ processor = SentenceProcessor()
 processor.combine_abs_comp(
     "samples/UD_English/test.srl.formatted.txt",
     "samples/comparative/conceptnet.formatted.txt",
-    "samples/UD_English_SRL_combine/test.formatted.txt",
+    "samples/UD_English_SRL_9label/test.formatted.txt",
     # "samples/comparative/train.formatted.txt",
     # "samples/comparative/comparative_gigaword_all_pairs.txt",
     # "samples/comparative/comparative_gigaword_all_pairs_instance.txt",
@@ -530,6 +530,6 @@ processor.combine_abs_comp(
 # srl = AllenSRL("samples/UD_English/train.srl.jsonl")
 # srl.predict_file("samples/UD_English/train.formatted.txt")
 # #
-# srl = AllenSRL("samples/UD_English/all_srl.jsonl")
-# srl.predict_file("samples/UD_English/to_srl.txt")
+# srl = AllenSRL("samples/duration/timebank_all_srl.jsonl")
+# srl.predict_file("samples/duration/timebank_to_srl.txt")
 

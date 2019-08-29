@@ -263,6 +263,8 @@ class DataReader:
             "months",
             "year",
             "years",
+            "decade",
+            "decades",
             "century",
             "centuries",
         ]
@@ -274,6 +276,7 @@ class DataReader:
             "weeks": 7.0 * 24.0 * 60.0 * 60.0,
             "months": 30.0 * 24.0 * 60.0 * 60.0,
             "years": 365.0 * 24.0 * 60.0 * 60.0,
+            "decades": 10.0 * 365.0 * 24.0 * 60.0 * 60.0,
             "centuries": 100.0 * 365.0 * 24.0 * 60.0 * 60.0,
         }
         self.normalize = normalize
@@ -728,7 +731,7 @@ def get_optimal_prediction(evaluator, prob_map):
 
 def get_unit_map(scores, label_list):
     # normalize_map = {'seconds': 6269, 'minutes': 36033, 'hours': 35158, 'days': 42898, 'weeks': 53334, 'months': 90745, 'years': 352289}
-    normalize_map = {'seconds': 1, 'minutes': 1, 'hours': 1, 'days': 1, 'weeks': 1, 'months': 1, 'years': 1}
+    normalize_map = {'seconds': 1, 'minutes': 1, 'hours': 1, 'days': 1, 'weeks': 1, 'months': 1, 'years': 1, 'decades': 1, "centuries": 1}
     unit_prob_map = {}
     for i, key in enumerate(label_list):
         unit_prob_map[key] = scores[i]
@@ -851,6 +854,8 @@ def eval_combined_pair_data(gold_path, predict_logits, optimize=True):
         "weeks",
         "months",
         "years",
+        "decades",
+        "centuries"
     ]
     distance_map = {
         "seconds": 0,
@@ -860,6 +865,8 @@ def eval_combined_pair_data(gold_path, predict_logits, optimize=True):
         "weeks": 4,
         "months": 5,
         "years": 6,
+        "decades": 7,
+        "centuries": 8
     }
     gold_lines = [x.strip() for x in open(gold_path).readlines()]
     filtered_gold_lines = []
@@ -868,7 +875,7 @@ def eval_combined_pair_data(gold_path, predict_logits, optimize=True):
     for line in gold_lines:
         groups = line.split("\t")
         if groups[2] == "NONE":
-            filtered_gold_lines.append(line)
+            # filtered_gold_lines.append(line)
             continue
         if len(groups[0].split()) > 120 or len(groups[3].split()) > 120:
             continue
@@ -882,7 +889,9 @@ def eval_combined_pair_data(gold_path, predict_logits, optimize=True):
         if label_b_num < 1.0:
             continue
         label_b, _ = reader.normalize_timex(label_b_num, label_b.split()[1].lower())
-        if label_a in ["instantaneous", "decades", "centuries", "forever"] or label_b in ["instantaneous", "decades", "centuries", "forever"]:
+        # IMPORTANT!!
+        skip_list = ["instantaneous", "forever", "none"]
+        if label_a in skip_list or label_b in skip_list:
             continue
         filtered_gold_lines.append(line)
     gold_lines = filtered_gold_lines
@@ -924,8 +933,8 @@ def eval_combined_pair_data(gold_path, predict_logits, optimize=True):
                 count_map[label_b] = 0
             count_map[label_a] += 1
             count_map[label_b] += 1
-            prediction_map_a = get_unit_map(scores[0:7], duration_keys_ordered)
-            prediction_map_b = get_unit_map(scores[7:14], duration_keys_ordered)
+            prediction_map_a = get_unit_map(scores[0:9], duration_keys_ordered)
+            prediction_map_b = get_unit_map(scores[9:18], duration_keys_ordered)
             prediction_a = "ERROR"
             prediction_b = "ERROR"
             if optimize:
@@ -952,14 +961,18 @@ def eval_combined_pair_data(gold_path, predict_logits, optimize=True):
             # if label_b != "years":
             # else:
             #     classification_total -= 1.0
+            # if count_map[label_a] < 250:
             classification_distance += float(abs(distance_map[label_a] - distance_map[prediction_a]))
+            classification_total += 1.0
+            # if count_map[label_b] < 250:
             classification_distance += float(abs(distance_map[label_b] - distance_map[prediction_b]))
-            classification_total += 2.0
+            classification_total += 1.0
     if pair_total != 0.0:
         print("Pairwise Acc.: " + str(pair_correct / pair_total))
     if classification_total != 0.0:
         print("Classification Dist.: " + str(classification_distance / classification_total))
     print(pair_total)
+    print(count_map)
     print(prediction_count_map)
 
 
@@ -1232,7 +1245,7 @@ def get_max_results(file_name):
         if avg_counter > 0 and (avg_dist / avg_counter) > 2:
             pass
             # continue
-        if "instantaneous" in predictions or "decades" in predictions or "centuries" in predictions or "forever" in predictions:
+        if "instantaneous" in predictions or "forever" in predictions:
             # pass
             continue
         prediction_random = random.choice(predictions)
@@ -1241,7 +1254,7 @@ def get_max_results(file_name):
         acc_cur_total = 0.0
         acc_cur_correct = 0.0
         for prediction in evaluator.duration_val_full.keys():
-            prediction = prediction_random
+             #prediction = prediction_random
             d_current = 0.0
             acc_correct = 0.0
             acc_total = 0.0
@@ -1419,8 +1432,8 @@ class HTMLFormatter:
 
 
 # eval_combined_pair_data("samples/UD_English_SRL/test.formatted.txt", "predictions/best_joint_on_udst.txt", optimize=False)
-# eval_combined_pair_data("samples/UD_English_SRL/test.formatted.txt", "bert_selection/bert_logits.txt", optimize=False)
-eval_combined_pair_data("samples/conceptnet/test.formatted.txt", "bert_logits.txt", optimize=False)
+eval_combined_pair_data("samples/UD_English_SRL_9label/test.formatted.txt", "bert_udst_eval/bert_logits.txt", optimize=False)
+# eval_combined_pair_data("samples/combine_test/test.formatted.txt", "bert_classification_eval/bert_logits.txt", optimize=False)
 # compare_predictions("samples/UD_English_SRL/test.formatted.txt",
 #                     "bert_logits.txt",
 #                     "predictions/bert_udst_finetune_classification.txt")
@@ -1433,7 +1446,7 @@ eval_combined_pair_data("samples/conceptnet/test.formatted.txt", "bert_logits.tx
 # convert_prob_file_pair("predictions/bert_combine_test_combine_model_2.txt", "samples/combine_test/test.formatted.txt", "samples/combine_test/test.visualize.txt")
 # convert_prob_file("bert_logits.txt", "samples/UD_English/test.formatted.txt", "bert_probs_noweight.txt")
 # s = 0.0
-# for i in range(100):
+# for i in range(1):
 #     s += get_max_results("samples/UD_English/test.srl.formatted.txt")
 # print(s)
 

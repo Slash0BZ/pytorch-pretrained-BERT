@@ -36,7 +36,7 @@ from tqdm import tqdm, trange
 from torch.nn import CrossEntropyLoss
 
 from pytorch_pretrained_bert.file_utils import PYTORCH_PRETRAINED_BERT_CACHE
-from pytorch_pretrained_bert.modeling import BertForSingleTokenClassification, BertForSingleTokenClassificationFollowTemporal, BertConfig, WEIGHTS_NAME, CONFIG_NAME
+from pytorch_pretrained_bert.modeling import BertForSingleTokenClassification, BertForSingleTokenClassificationWithVanilla, BertConfig, WEIGHTS_NAME, CONFIG_NAME
 from pytorch_pretrained_bert.tokenization import BertTokenizer, BasicTokenizer
 from pytorch_pretrained_bert.optimization import BertAdam, warmup_linear
 
@@ -117,17 +117,7 @@ class TemporalVerbProcessor(DataProcessor):
         """See base class."""
         f = open(os.path.join(data_dir, "train.formatted.txt"), "r")
         lines = [x.strip() for x in f.readlines()]
-        examples = self._create_examples(lines, "train")
-        count_map = {}
-        for e in examples:
-            if e.label_a not in count_map:
-                count_map[e.label_a] = 0
-            if e.label_b not in count_map:
-                count_map[e.label_b] = 0
-            count_map[e.label_a] += 1
-            count_map[e.label_b] += 1
-        print(count_map)
-        return examples
+        return self._create_examples(lines, "train")
 
     def get_dev_examples(self, data_dir):
         f = open(os.path.join(data_dir, "test.formatted.txt"), "r")
@@ -167,7 +157,6 @@ class TemporalVerbProcessor(DataProcessor):
             "week": "weeks",
             "month": "months",
             "year": "years",
-            "decade": "decades",
             "century": "centuries",
         }
         if u in m:
@@ -234,9 +223,6 @@ class TemporalVerbProcessor(DataProcessor):
                 if label_a in ["instantaneous", "forever"] or label_b in ["instantaneous", "forever"]:
                     continue
 
-                if label_a == "NONE" or label_b == "NONE":
-                    continue
-
                 examples.append(
                     InputExample(
                         guid=guid, text_a=text_a, text_b=text_b, label_a=label_a, label_b=label_b,
@@ -299,20 +285,7 @@ def convert_single_pair(text, target_idx, label, tokenizer, max_seq_length, labe
         for i in range(label_id - 1, -1, -1):
             soft_labels[i] = label_vector[label_id - i]
 
-    weight_map = {
-        0: 11.66,
-        1: 2.04,
-        2: 2.08,
-        3: 1.71,
-        4: 1.33,
-        5: 0.78,
-        6: 0.44,
-        7: 0.35,
-        8: 2.74
-    }
     adjustment = 1.0
-    if label_id > -1:
-        adjustment = weight_map[label_id]
 
     return input_ids, input_mask, segment_ids, label_id, target_idx + 1, adjustment, soft_labels
 
@@ -344,13 +317,6 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
             rel_soft_labels[0] = 1.0
         elif example.rel_label == "MORE":
             rel_soft_labels[1] = 1.0
-
-        if ex_index < 100:
-            logger.info("*** Example ***")
-            logger.info("tokens: %s" % " ".join(
-                [str(x) for x in example.text_a.split()]))
-            logger.info("label: %s" % example.label_a)
-            logger.info("soft label: %s" % " ".join(str(x) for x in soft_labels_a))
 
         features.append(
             InputFeatures(
@@ -408,7 +374,6 @@ def weighted_mse_loss(logits, target):
     loss = torch.mean(loss)
     return loss
 
-
 def weighted_l1_loss(logits, target):
     target = target.view(-1, 1)
     logits = nn.functional.log_softmax(logits, -1)
@@ -422,21 +387,19 @@ def weighted_l1_loss(logits, target):
     loss = torch.mean(loss)
     return loss
 
-
 def weighted_l1_loss_pair(logits, target_a, target_b):
     return weighted_l1_loss(logits.narrow(1, 0, 11), target_a) + weighted_l1_loss(logits.narrow(1, 11, 11), target_b)
 
-
-def soft_cross_entropy_loss(logits, soft_target_a, adjustment_a, soft_target_b, adjustment_b, rel_soft_targets, num_labels):
+def soft_cross_entropy_loss(logits, soft_target_a, adjustment_a, soft_target_b, adjusment_b, rel_soft_targets, num_labels):
     logits_a = logits.narrow(1, 0, num_labels)
     logits_b = logits.narrow(1, num_labels, num_labels)
     logits_rel = logits.narrow(1, 2 * num_labels, 2)
 
     loss_a = -soft_target_a * nn.functional.log_softmax(logits_a, -1)
-    loss_a = torch.sum(loss_a, -1) * adjustment_a
+    loss_a = torch.sum(loss_a, -1)
 
     loss_b = -soft_target_b * nn.functional.log_softmax(logits_b, -1)
-    loss_b = torch.sum(loss_b, -1) * adjustment_b
+    loss_b = torch.sum(loss_b, -1)
 
     loss_rel = -rel_soft_targets * nn.functional.log_softmax(logits_rel, -1)
     loss_rel = torch.sum(loss_rel, -1)
@@ -618,20 +581,13 @@ def main():
     model = BertForSingleTokenClassification.from_pretrained(args.bert_model,
               cache_dir=cache_dir,
               num_labels=num_labels)
-    # model.bert.embeddings.requires_grad = False
-    # model.bert.encoder.requires_grad = False
-    # model.bert.requires_grad = False
-    # model.all_attention.requires_grad = False
-    # for p in model.bert_temporal.parameters():
-    #     p.requires_grad = False
     # for p in model.bert.parameters():
     #     p.requires_grad = False
-    # for p in model.pi_classifier.parameters():
+    # for p in model.bert_vanilla.parameters():
     #     p.requires_grad = False
-    # for p in model.mu_classifier.parameters():
+    # for p in model.label_classifier.parameters():
     #     p.requires_grad = False
-    # for p in model.sigma_classifier.parameters():
-    #     p.requires_grad = False
+
 
     if args.fp16:
         model.half()
@@ -717,8 +673,8 @@ def main():
         train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size=args.train_batch_size)
 
         model.train()
-        output_loss_file = os.path.join(args.output_dir, "loss_log.txt")
-        f_loss = open(output_loss_file, "a")
+        output_model_file = os.path.join(args.output_dir, "loss_log.txt")
+        f_loss = open(output_model_file, "a")
         epoch_loss = 0.0
         epoch_label_loss = 0.0
         epoch_rel_loss = 0.0
@@ -731,10 +687,10 @@ def main():
             for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration")):
 
                 if step == 0:
-                    # f_loss.write(("Total Loss: " + str(epoch_loss)) + "\n")
-                    # f_loss.write(("Label Loss: " + str(epoch_label_loss)) + "\n")
-                    # f_loss.write(("Rel Loss: " + str(epoch_rel_loss)) + "\n")
-                    # f_loss.flush()
+                    f_loss.write(("Total Loss: " + str(epoch_loss)) + "\n")
+                    f_loss.write(("Label Loss: " + str(epoch_label_loss)) + "\n")
+                    f_loss.write(("Rel Loss: " + str(epoch_rel_loss)) + "\n")
+                    f_loss.flush()
                     epoch_loss = 0.0
                     epoch_label_loss = 0.0
                     epoch_rel_loss = 0.0
@@ -787,10 +743,10 @@ def main():
                 # if step % 1 == 0:
                 #     print(model.bert_temporal.encoder.layer[0].intermediate.dense.weight)
                 if step % 100 == 0:
-                    f_loss.write(("Total Loss: " + str(middle_loss)) + "\n")
-                    f_loss.write(("Label Loss: " + str(middle_label_loss)) + "\n")
-                    f_loss.write(("Rel Loss: " + str(middle_rel_loss)) + "\n")
-                    f_loss.flush()
+                    # f_loss.write(("Total Loss: " + str(middle_loss)) + "\n")
+                    # f_loss.write(("Label Loss: " + str(middle_label_loss)) + "\n")
+                    # f_loss.write(("Rel Loss: " + str(middle_rel_loss)) + "\n")
+                    # f_loss.flush()
                     middle_loss = 0.0
                     middle_label_loss = 0.0
                     middle_rel_loss = 0.0

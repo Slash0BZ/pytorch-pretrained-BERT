@@ -35,7 +35,7 @@ class VerbPhysicsClassification(nn.Module):
     def __init__(self, num_labels, input_size, glove_size):
         super(VerbPhysicsClassification, self).__init__()
         self.num_labels = num_labels
-        self.dropout = nn.Dropout(0.1)
+        self.dropout = nn.Dropout(0.2)
         self.hidden_size = 768
 
         self.classifier_1 = nn.Linear(input_size, self.hidden_size)
@@ -52,8 +52,8 @@ class VerbPhysicsClassification(nn.Module):
         self.classifier = nn.Linear(num_labels * 2, num_labels)
 
     def forward(self, input_1s, input_2s, embedding_1s, embedding_2s, dim_embeds, labels=None):
-        state_1 = F.relu(self.classifier_1(input_1s))
-        state_2 = F.relu(self.classifier_2(input_2s))
+        state_1 = F.relu(self.classifier_1(self.dropout(input_1s)))
+        state_2 = F.relu(self.classifier_2(self.dropout(input_2s)))
         state = torch.cat((state_1, state_2), dim=1)
         state = self.classifier_duration(state)
 
@@ -103,7 +103,7 @@ class Runner:
 
     def __init__(self, train_data, dev_data, test_data, embedding_file):
         self.num_label = 3
-        self.input_size = 100
+        self.input_size = 700
         self.glove_size = 100
 
         # if os.path.isfile("./glove_cache.pkl"):
@@ -166,7 +166,7 @@ class Runner:
                 list([0] * 100),
                 dimension_name="size"
             )
-            if instance.label != 3 and group[2].lower() == "speed":
+            if instance.label != 3 and group[2].lower() == "mass":
                 instances.append(instance)
 
             # Adding weight
@@ -270,7 +270,7 @@ class Runner:
 
                 # self.adjust_learning_rate(optimizer, _, learning_rate)
             tmp_loss += epoch_loss
-            if _ % 10 == 0:
+            if _ % 500 == 0:
                 for param_group in optimizer.param_groups:
                     print(param_group['lr'])
                 print("Avg Epoch Loss: " + str(tmp_loss / 10.0))
@@ -335,8 +335,8 @@ if __name__ == "__main__":
         train_data="samples/vp_clean/reannotations/train.csv",
         dev_data="samples/vp_clean/reannotations/dev.csv",
         test_data="samples/vp_clean/reannotations/test.csv",
-        embedding_file="samples/vp_clean/reannotations/obj_embedding_100v_mean.pkl"
+        embedding_file="samples/vp_clean/reannotations/obj_embedding_100v.pkl"
     )
-    runner.train(epoch=5000, batch_size=16)
+    runner.train(epoch=10000, batch_size=16)
     runner.eval(runner.dev_data)
     runner.eval(runner.test_data)

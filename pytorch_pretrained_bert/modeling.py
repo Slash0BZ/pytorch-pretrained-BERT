@@ -1238,10 +1238,9 @@ class BertForSingleTokenClassificationWithVanilla(BertPreTrainedModel):
 
         self.comparison_classifier = nn.Linear(config.hidden_size, 1)
         self.label_classifier = nn.Linear(config.hidden_size, self.num_labels)
-        self.label_classifier_fresh = nn.Linear(config.hidden_size, self.num_labels)
         self.label_classifier_vanilla = nn.Linear(config.hidden_size, self.num_labels)
         self.selection_classifier = nn.Linear(config.hidden_size, 1)
-        # self.label_classifier_concat = nn.Linear(config.hidden_size * 2, self.num_labels)
+        self.label_classifier_concat = nn.Linear(config.hidden_size * 2, self.num_labels)
         # self.decide_classifier = nn.Linear(self.num_labels * 2, self.num_labels)
 
         self.rel_classifier = nn.Linear(2, 2)
@@ -1250,24 +1249,23 @@ class BertForSingleTokenClassificationWithVanilla(BertPreTrainedModel):
         seq_output, _ = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False)
         target_all_output = seq_output.gather(1, target_ids.view(-1, 1).unsqueeze(2).repeat(1, 1, seq_output.size(2)))
         pooled_output = self.dropout(target_all_output)
-        logits = self.label_classifier_fresh(pooled_output)
+        # logits = self.label_classifier(pooled_output)
 
         seq_output_vanilla, _ = self.bert_vanilla(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False)
         target_all_output_vanilla = seq_output_vanilla.gather(1, target_ids.view(-1, 1).unsqueeze(2).repeat(1, 1, seq_output.size(2)))
         pooled_output_vanilla = self.dropout(target_all_output_vanilla)
-        logits_vanilla = self.label_classifier_vanilla(pooled_output_vanilla)
+        # logits_vanilla = self.label_classifier_vanilla(pooled_output_vanilla)
 
         comparison_logits = self.comparison_classifier(pooled_output)
 
-        # final_logits = self.label_classifier_concat(torch.cat((pooled_output, pooled_output_vanilla), -1))
+        final_logits = self.label_classifier_concat(torch.cat((pooled_output, pooled_output_vanilla), -1))
         # final_logits = logits_vanilla
         # final_logits = logits
         # final_logits = self.decide_classifier(nn.functional.relu(torch.cat((logits, logits_vanilla), -1)))
 
-        selection_weight = self.selection_classifier(target_all_output_vanilla)
-        selection_weight = (torch.tanh(selection_weight) + 1) / 2
-        print(selection_weight)
-        final_logits = selection_weight * logits_vanilla + (1. - selection_weight) * logits
+        # selection_weight = self.selection_classifier(target_all_output_vanilla)
+        # selection_weight = (torch.tanh(selection_weight) + 1) / 2
+        # final_logits = selection_weight * logits_vanilla + (1. - selection_weight) * logits
 
         return final_logits, comparison_logits
 

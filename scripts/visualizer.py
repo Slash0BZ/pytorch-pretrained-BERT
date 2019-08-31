@@ -36,7 +36,7 @@ class LossVisualizer:
 # visualizer = LossVisualizer("bert_comb_dummy_1e4_40/loss_log.txt")
 # visualizer = LossVisualizer("bert_comb_dummy/loss_log.txt")
 # visualizer = LossVisualizer("bert_comb_clip_high_e/loss_log.txt")
-visualizer = LossVisualizer("bert_classification_9label_weighted/loss_log.txt")
+visualizer = LossVisualizer("loss_log.txt")
 
 # visualizer = LossVisualizer("loss_log.txt")
 visualizer.visualize("Total Loss")

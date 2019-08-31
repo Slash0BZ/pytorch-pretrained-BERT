@@ -12,6 +12,14 @@ import gensim
 import numpy as np
 import math
 import random
+from torch.optim.lr_scheduler import LambdaLR
+
+random.seed(9001)
+
+import nltk
+# nltk.download('wordnet', download_dir='/scratch/xzhou45/bert/venv/nltk_data')
+from nltk.stem import WordNetLemmatizer
+
 
 
 class LayerNorm(nn.Module):
@@ -29,20 +37,32 @@ class LayerNorm(nn.Module):
         x = (x - u) / torch.sqrt(s + self.variance_epsilon)
         return self.weight * x + self.bias
 
+
 class TimeBankClassification(nn.Module):
-    def __init__(self, num_labels, input_size):
+    def __init__(self, num_labels, duration_input_size=2, verb_input_size=1, vocab_size=100):
         super(TimeBankClassification, self).__init__()
+        print(vocab_size)
         self.num_labels = num_labels
-        self.hidden_size = 768
+        self.duration_input_size = duration_input_size
+        self.verb_input_size = verb_input_size
+        self.embed = nn.Embedding(vocab_size, 1)
+        self.duration_classifier = nn.Sequential(
+            nn.Linear(self.duration_input_size, 2),
+            nn.ReLU(),
+            nn.Linear(2, 1)
+        )
+        self.verb_classifier = nn.Linear(1, 1)
+        self.classifier = nn.Sequential(
+            nn.Linear(2, 2),
+            nn.ReLU(),
+            nn.Linear(2, self.num_labels)
+        )
 
-        self.intermediate_1 = nn.Linear(input_size, self.hidden_size)
-        self.intermediate_2 = nn.Linear(self.hidden_size, 16)
-        self.dropout = nn.Dropout(0.1)
-        self.classifier = nn.Linear(input_size, num_labels)
-        self.bias = nn.Parameter(torch.zeros(num_labels))
-
-    def forward(self, inputs, labels=None):
-        logits = self.classifier(inputs)
+    def forward(self, inputs_duration, inputs_verb, labels=None):
+        logits = self.duration_classifier(nn.functional.softmax(inputs_duration, -1))
+        logits_verb = self.verb_classifier(self.embed(inputs_verb)).view(-1, 1)
+        logits = self.classifier(torch.cat((logits, logits_verb), -1))
+        # logits = self.classifier(torch.cat((logits, self.embed(inputs_verb).view(-1, 2)), -1))
 
         if labels is not None:
             loss_fn = CrossEntropyLoss()
@@ -52,42 +72,42 @@ class TimeBankClassification(nn.Module):
             return logits
 
 
+class WarmupLinearSchedule(LambdaLR):
+    """ Linear warmup and then linear decay.
+        Linearly increases learning rate from 0 to 1 over `warmup_steps` training steps.
+        Linearly decreases learning rate from 1. to 0. over remaining `t_total - warmup_steps` steps.
+    """
+    def __init__(self, optimizer, warmup_steps, t_total, last_epoch=-1):
+        self.warmup_steps = warmup_steps
+        self.t_total = t_total
+        super(WarmupLinearSchedule, self).__init__(optimizer, self.lr_lambda, last_epoch=last_epoch)
+
+    def lr_lambda(self, step):
+        if step < self.warmup_steps:
+            return float(step) / float(max(1, self.warmup_steps))
+        return max(0.0, float(self.t_total - step) / float(max(1.0, self.t_total - self.warmup_steps)))
+
+
 class Runner:
 
     class Instance:
 
-        def __init__(self, input, label, num_label, input_size):
-            self.input = input
+        def __init__(self, input_duration, input_verb, label, num_label, input_size_duration, input_size_verb):
+            self.input_duration = input_duration
+            self.input_verb = input_verb
             self.label = label
             self.num_label = num_label
-            self.input_size = input_size
+            self.input_size_duration = input_size_duration
+            self.input_size_verb = input_size_verb
 
     def __init__(self, data_file, embedding_file):
         self.num_label = 2
-        self.input_size = 100
-
+        self.vocab = {}
+        self.lemmatizer = WordNetLemmatizer()
         self.embedding = [x.strip().split("\t") for x in open(embedding_file).readlines()]
         # self.glove_model = gensim.models.KeyedVectors.load_word2vec_format("data/glove_model.txt", binary=False)
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.convert_map = {
-            "second": 1.0,
-            "seconds": 1.0,
-            "minute": 60.0,
-            "minutes": 60.0,
-            "hour": 60.0 * 60.0,
-            "hours": 60.0 * 60.0,
-            "day": 24.0 * 60.0 * 60.0,
-            "days": 24.0 * 60.0 * 60.0,
-            "week": 7.0 * 24.0 * 60.0 * 60.0,
-            "weeks": 7.0 * 24.0 * 60.0 * 60.0,
-            "month": 30.0 * 24.0 * 60.0 * 60.0,
-            "months": 30.0 * 24.0 * 60.0 * 60.0,
-            "year": 365.0 * 24.0 * 60.0 * 60.0,
-            "years": 365.0 * 24.0 * 60.0 * 60.0,
-            "century": 100.0 * 365.0 * 24.0 * 60.0 * 60.0,
-            "centuries": 100.0 * 365.0 * 24.0 * 60.0 * 60.0,
-        }
         self.all_data = self.load_data_file(data_file)
         random.shuffle(self.all_data)
 
@@ -97,7 +117,7 @@ class Runner:
         test_data = []
         label_count = [0, 0]
         for d in self.train_data:
-            if label_count[d.label] >= 100:
+            if label_count[d.label] >= 500:
                 test_data.append(d)
                 continue
             label_count[d.label] += 1
@@ -105,68 +125,64 @@ class Runner:
         self.train_data = new_train_data
         self.eval_data = test_data
 
-        self.model = TimeBankClassification(self.num_label, self.input_size).to(self.device)
+        self.model = TimeBankClassification(self.num_label, vocab_size=len(self.vocab)).to(self.device)
 
-    def get_seconds(self, exp):
 
-        unit = ""
-        if exp.startswith("PT") and exp[-1] == "M":
-            unit = "minute"
-        if exp[-1] == "M" and exp[1] != "T":
-            unit = "month"
-        if exp[-1] == "Y":
-            unit = "year"
-        if exp[-1] == "D":
-            unit = "day"
-        if exp[-1] == "W":
-            unit = "week"
-        if exp[-1] == "H":
-            unit = "hour"
-        if exp[-1] == "S":
-            unit = "second"
-        if exp.startswith("PT"):
-            exp = exp[2:]
-        else:
-            exp = exp[1:]
-        if unit == "" or exp == "NULL":
-            return None
-        exp = exp[:-1]
-        label_num = float(exp)
-
-        return label_num * self.convert_map[unit]
+    def custom_softmax(self, l):
+        ret_list = []
+        s = 0.0
+        for num in l:
+            s += math.exp(num)
+        for num in l:
+            ret_list.append(math.exp(num) / s)
+        return ret_list
 
     def load_data_file(self, data_file):
         instances = []
         for i, line in enumerate([x.strip() for x in open(data_file).readlines()]):
             group = line.split("\t")
-            lower = self.get_seconds(group[2])
-            upper = self.get_seconds(group[3])
-            lower_e = math.log(lower)
-            upper_e = math.log(upper)
-
-            if (lower_e + upper_e) / 2.0 >= 11.367:
-                label = 1
-            else:
-                label = 0
+            label_a = 0
+            if group[2] == "1 years":
+                label_a = 1
+            label_b = 0
+            if group[5] == "1 years":
+                label_b = 1
 
             input = [float(x) for x in self.embedding[i]]
-            # input_1 = input[:24]
-            # input = [float(sum(input_1))]
-            # input_2 = input[5:10]
-            # input_3 = input[200:205]
-            # input_4 = input[300:305]
-            # input = [float(sum(input_1)), float(sum(input_2)), float(sum(input_3)), float(sum(input_4))]
-            # input_24 = input[:24]
-            # input_rest = input[24:]
-            # input = [float(sum(input_24)), float(sum(input_rest))]
-            # input = [float(random.random()) for x in self.embedding[i]]
-            # input = [0] * 100
-            # verb = group[0].split()[int(group[1])]
-            # if verb in self.glove_model.vocab:
-            #     input = list(self.glove_model.get_vector(verb))
 
+            verb_a = self.lemmatizer.lemmatize(group[0].split()[int(group[1])].lower(), 'v')
+            verb_b = self.lemmatizer.lemmatize(group[3].split()[int(group[4])].lower(), 'v')
+
+            if verb_a not in self.vocab:
+                self.vocab[verb_a] = len(self.vocab)
+            if verb_b not in self.vocab:
+                self.vocab[verb_b] = len(self.vocab)
+
+            # glove_a = [0] * 100
+            # glove_b = [0] * 100
+            #
+            # if verb_a in self.glove_model.vocab:
+            #     glove_a = list(self.glove_model.get_vector(verb_a))
+            # if verb_b in self.glove_model.vocab:
+            #     glove_b = list(self.glove_model.get_vector(verb_b))
+
+            scores_a = self.custom_softmax(input[0:9])
             instance = self.Instance(
-                input, label, self.num_label, self.input_size
+                # input[0:9], glove_a, label_a, self.num_label, 9, 100
+                # input[0:9], [self.vocab[verb_a]], label_a, self.num_label, 9, 1
+                # [sum(scores_a[0:3]), sum(scores_a[3:9])], [self.vocab[verb_a]], label_a, self.num_label, 2, 1
+                [0.0, 0.0], [self.vocab[verb_a]], label_a, self.num_label, 2, 1
+                # [0] * 9, glove_a, label_a, self.num_label, 9, 100
+            )
+            instances.append(instance)
+
+            scores_b = self.custom_softmax(input[9:18])
+            instance = self.Instance(
+                # input[9:18], glove_b, label_b, self.num_label, 9, 100
+                # input[9:18], [self.vocab[verb_b]], label_b, self.num_label, 9, 1
+                # [sum(scores_b[0:3]), sum(scores_b[3:9])], [self.vocab[verb_b]], label_b, self.num_label, 2, 1
+                [0.0, 0.0], [self.vocab[verb_b]], label_b, self.num_label, 2, 1
+                # [0] * 9, glove_b, label_b, self.num_label, 9, 100
             )
             instances.append(instance)
 
@@ -177,17 +193,20 @@ class Runner:
         for param_group in optimizer.param_groups:
             param_group['lr'] = lr
 
-    def train(self, data, epoch=5, batch_size=32, learning_rate=0.2):
+    def train(self, data, epoch=5, batch_size=32, learning_rate=0.02):
 
         parameters = filter(lambda p: p.requires_grad, self.model.parameters())
-        optimizer = torch.optim.Adam(parameters, lr=learning_rate)
+        optimizer = torch.optim.AdamW(parameters, lr=learning_rate)
+        scheduler = WarmupLinearSchedule(optimizer, warmup_steps=3200,
+                                         t_total=32000)
         loss_fn = nn.CrossEntropyLoss()
 
-        all_train_input = torch.tensor([f.input for f in data], dtype=torch.float)
+        all_train_input_duration = torch.tensor([f.input_duration for f in data], dtype=torch.float)
+        all_train_input_verb = torch.tensor([f.input_verb for f in data], dtype=torch.long)
         all_train_labels = torch.tensor([f.label for f in data], dtype=torch.long)
 
         train_data_tensor = TensorDataset(
-            all_train_input, all_train_labels
+            all_train_input_duration, all_train_input_verb, all_train_labels
         )
         train_sampler = RandomSampler(train_data_tensor)
         train_dataloader = DataLoader(train_data_tensor, sampler=train_sampler, batch_size=batch_size)
@@ -199,34 +218,36 @@ class Runner:
             epoch_loss = 0
             for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration")):
                 batch = tuple(t.to(self.device) for t in batch)
-                inputs, labels = batch
+                inputs_duration, inputs_verb, labels = batch
 
-                logits = self.model(inputs, None)
+                logits = self.model(inputs_duration, inputs_verb, None)
 
                 loss = loss_fn(logits.view(-1, self.num_label), labels.view(-1))
                 epoch_loss += loss.item()
 
                 loss.backward()
                 optimizer.step()
-                optimizer.zero_grad()
+                scheduler.step()
+                self.model.zero_grad()
 
                 global_step += 1
 
-                self.adjust_learning_rate(optimizer, _, learning_rate)
+                # self.adjust_learning_rate(optimizer, _, learning_rate)
 
             tmp_loss += epoch_loss
-            if _ % 10 == 0:
+            if _ % 100 == 0:
                 for param_group in optimizer.param_groups:
                     print(param_group['lr'])
                 print("Avg Epoch Loss: " + str(tmp_loss / 10.0))
                 tmp_loss = 0
 
-    def eval(self, data, batch_size=8):
-        all_test_inputs = torch.tensor([f.input for f in data], dtype=torch.float)
+    def eval(self, data, out_file, batch_size=8):
+        all_test_inputs_duration = torch.tensor([f.input_duration for f in data], dtype=torch.float)
+        all_test_inputs_verb = torch.tensor([f.input_verb for f in data], dtype=torch.long)
         all_test_labels = torch.tensor([f.label for f in data], dtype=torch.long)
 
         eval_data = TensorDataset(
-            all_test_inputs, all_test_labels
+            all_test_inputs_duration, all_test_inputs_verb, all_test_labels
         )
         eval_sampler = SequentialSampler(eval_data)
         eval_dataloader = DataLoader(eval_data, sampler=eval_sampler, batch_size=batch_size)
@@ -234,13 +255,14 @@ class Runner:
         self.model.eval()
         all_preds = []
         all_labels = []
-        for inputs, labels in tqdm(eval_dataloader, desc="Evaluating"):
-            inputs = inputs.to(self.device)
+        for inputs_duration, inputs_verb, labels in tqdm(eval_dataloader, desc="Evaluating"):
+            inputs_duration = inputs_duration.to(self.device)
+            inputs_verb = inputs_verb.to(self.device)
             labels = labels.to(self.device).detach().cpu().numpy()
 
             with torch.no_grad():
-                logits = self.model(inputs, None).detach().cpu().numpy()
-                # logits[:, 0] += 0.9
+                logits = self.model(inputs_duration, inputs_verb, None).detach().cpu().numpy()
+
             preds = np.argmax(logits, axis=1)
 
             all_preds += list(preds)
@@ -272,17 +294,29 @@ class Runner:
             else:
                 s_labeled += 1.0
 
-        print("Acc.: " + str(correct / float(len(all_preds))))
-        print("Less than a day: " + str(s_correct / s_predicted) + ", " + str(s_correct / s_labeled))
-        print("Longer than a day: " + str(l_correct / l_predicted) + ", " + str(l_correct / l_labeled))
+        if out_file is not None:
+            with open(out_file, "a") as f_out:
+                f_out.write("Acc.: " + str(correct / float(len(all_preds))))
+                f_out.write("\n")
+                f_out.write("Less than a day: " + str(s_correct / s_predicted) + ", " + str(s_correct / s_labeled))
+                f_out.write("\n")
+                f_out.write("Longer than a day: " + str(l_correct / l_predicted) + ", " + str(l_correct / l_labeled))
+                f_out.write("\n")
+        else:
+            print("Acc.: " + str(correct / float(len(all_preds))))
+            print("Less than a day: " + str(s_correct / s_predicted) + ", " + str(s_correct / s_labeled))
+            print("Longer than a day: " + str(l_correct / l_predicted) + ", " + str(l_correct / l_labeled))
+
 
 
 if __name__ == "__main__":
     runner = Runner(
-        data_file="samples/duration/timebank_svo_verbonly.txt",
-        embedding_file="./result_logits.txt"
+        data_file="samples/timebank/test.formatted.txt",
+        embedding_file="bert_timebank_eval/bert_logits.txt"
     )
     print(len(runner.train_data))
     print(len(runner.eval_data))
-    runner.train(runner.train_data[:200], epoch=1000, batch_size=1)
-    runner.eval(runner.eval_data)
+    runner.train(runner.train_data, epoch=1000, batch_size=32)
+    runner.eval(runner.train_data, None)
+    print(runner.train_data[-1].input_verb)
+    runner.eval(runner.eval_data, "timebank_result.txt")

@@ -578,7 +578,7 @@ def main():
 
     # Prepare model
     cache_dir = args.cache_dir if args.cache_dir else os.path.join(str(PYTORCH_PRETRAINED_BERT_CACHE), 'distributed_{}'.format(args.local_rank))
-    model = BertForSingleTokenClassification.from_pretrained(args.bert_model,
+    model = BertForSingleTokenClassificationWithVanilla.from_pretrained(args.bert_model,
               cache_dir=cache_dir,
               num_labels=num_labels)
     # for p in model.bert.parameters():
@@ -687,10 +687,10 @@ def main():
             for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration")):
 
                 if step == 0:
-                    f_loss.write(("Total Loss: " + str(epoch_loss)) + "\n")
-                    f_loss.write(("Label Loss: " + str(epoch_label_loss)) + "\n")
-                    f_loss.write(("Rel Loss: " + str(epoch_rel_loss)) + "\n")
-                    f_loss.flush()
+                    # f_loss.write(("Total Loss: " + str(epoch_loss)) + "\n")
+                    # f_loss.write(("Label Loss: " + str(epoch_label_loss)) + "\n")
+                    # f_loss.write(("Rel Loss: " + str(epoch_rel_loss)) + "\n")
+                    # f_loss.flush()
                     epoch_loss = 0.0
                     epoch_label_loss = 0.0
                     epoch_rel_loss = 0.0
@@ -743,10 +743,10 @@ def main():
                 # if step % 1 == 0:
                 #     print(model.bert_temporal.encoder.layer[0].intermediate.dense.weight)
                 if step % 100 == 0:
-                    # f_loss.write(("Total Loss: " + str(middle_loss)) + "\n")
-                    # f_loss.write(("Label Loss: " + str(middle_label_loss)) + "\n")
-                    # f_loss.write(("Rel Loss: " + str(middle_rel_loss)) + "\n")
-                    # f_loss.flush()
+                    f_loss.write(("Total Loss: " + str(middle_loss)) + "\n")
+                    f_loss.write(("Label Loss: " + str(middle_label_loss)) + "\n")
+                    f_loss.write(("Rel Loss: " + str(middle_rel_loss)) + "\n")
+                    f_loss.flush()
                     middle_loss = 0.0
                     middle_label_loss = 0.0
                     middle_rel_loss = 0.0
@@ -786,10 +786,10 @@ def main():
 
         # Load a trained model and config that you have fine-tuned
         config = BertConfig(output_config_file)
-        model = BertForSingleTokenClassification(config, num_labels=num_labels)
+        model = BertForSingleTokenClassificationWithVanilla(config, num_labels=num_labels)
         model.load_state_dict(torch.load(output_model_file))
     else:
-        model = BertForSingleTokenClassification.from_pretrained(args.bert_model, num_labels=num_labels)
+        model = BertForSingleTokenClassificationWithVanilla.from_pretrained(args.bert_model, num_labels=num_labels)
     model.to(device)
 
     # if args.do_eval and (args.local_rank == -1 or torch.distributed.get_rank() == 0):

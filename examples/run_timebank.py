@@ -39,7 +39,7 @@ class LayerNorm(nn.Module):
 
 
 class TimeBankClassification(nn.Module):
-    def __init__(self, num_labels, duration_input_size=2, verb_input_size=1, vocab_size=100):
+    def __init__(self, num_labels, duration_input_size=768, verb_input_size=1, vocab_size=100):
         super(TimeBankClassification, self).__init__()
         print(vocab_size)
         self.num_labels = num_labels
@@ -48,8 +48,8 @@ class TimeBankClassification(nn.Module):
         self.embed = nn.Embedding(vocab_size, 1)
         self.duration_classifier = nn.Sequential(
             nn.Linear(self.duration_input_size, 2),
-            nn.ReLU(),
-            nn.Linear(2, 1)
+            # nn.ReLU(),
+            # nn.Linear(4, 2),
         )
         self.verb_classifier = nn.Linear(1, 1)
         self.classifier = nn.Sequential(
@@ -57,11 +57,13 @@ class TimeBankClassification(nn.Module):
             nn.ReLU(),
             nn.Linear(2, self.num_labels)
         )
+        self.dropout = nn.Dropout(0.2)
 
     def forward(self, inputs_duration, inputs_verb, labels=None):
-        logits = self.duration_classifier(nn.functional.softmax(inputs_duration, -1))
-        logits_verb = self.verb_classifier(self.embed(inputs_verb)).view(-1, 1)
-        logits = self.classifier(torch.cat((logits, logits_verb), -1))
+        inputs_duration = self.dropout(inputs_duration)
+        logits = self.duration_classifier(inputs_duration)
+        # logits_verb = self.verb_classifier(self.embed(inputs_verb)).view(-1, 1)
+        # logits = self.classifier(torch.cat((logits, logits_verb), -1))
         # logits = self.classifier(torch.cat((logits, self.embed(inputs_verb).view(-1, 2)), -1))
 
         if labels is not None:
@@ -117,7 +119,7 @@ class Runner:
         test_data = []
         label_count = [0, 0]
         for d in self.train_data:
-            if label_count[d.label] >= 500:
+            if label_count[d.label] >= 100:
                 test_data.append(d)
                 continue
             label_count[d.label] += 1
@@ -126,7 +128,6 @@ class Runner:
         self.eval_data = test_data
 
         self.model = TimeBankClassification(self.num_label, vocab_size=len(self.vocab)).to(self.device)
-
 
     def custom_softmax(self, l):
         ret_list = []
@@ -171,8 +172,9 @@ class Runner:
                 # input[0:9], glove_a, label_a, self.num_label, 9, 100
                 # input[0:9], [self.vocab[verb_a]], label_a, self.num_label, 9, 1
                 # [sum(scores_a[0:3]), sum(scores_a[3:9])], [self.vocab[verb_a]], label_a, self.num_label, 2, 1
-                [0.0, 0.0], [self.vocab[verb_a]], label_a, self.num_label, 2, 1
+                # [0.0, 0.0], [self.vocab[verb_a]], label_a, self.num_label, 2, 1
                 # [0] * 9, glove_a, label_a, self.num_label, 9, 100
+                input[:768], [0], label_a, self.num_label, 768, 1
             )
             instances.append(instance)
 
@@ -181,7 +183,8 @@ class Runner:
                 # input[9:18], glove_b, label_b, self.num_label, 9, 100
                 # input[9:18], [self.vocab[verb_b]], label_b, self.num_label, 9, 1
                 # [sum(scores_b[0:3]), sum(scores_b[3:9])], [self.vocab[verb_b]], label_b, self.num_label, 2, 1
-                [0.0, 0.0], [self.vocab[verb_b]], label_b, self.num_label, 2, 1
+                # [0.0, 0.0], [self.vocab[verb_b]], label_b, self.num_label, 2, 1
+                input[768:], [0], label_b, self.num_label, 768, 1
                 # [0] * 9, glove_b, label_b, self.num_label, 9, 100
             )
             instances.append(instance)
@@ -197,8 +200,8 @@ class Runner:
 
         parameters = filter(lambda p: p.requires_grad, self.model.parameters())
         optimizer = torch.optim.AdamW(parameters, lr=learning_rate)
-        scheduler = WarmupLinearSchedule(optimizer, warmup_steps=3200,
-                                         t_total=32000)
+        scheduler = WarmupLinearSchedule(optimizer, warmup_steps=6400,
+                                         t_total=64000)
         loss_fn = nn.CrossEntropyLoss()
 
         all_train_input_duration = torch.tensor([f.input_duration for f in data], dtype=torch.float)
@@ -304,8 +307,14 @@ class Runner:
                 f_out.write("\n")
         else:
             print("Acc.: " + str(correct / float(len(all_preds))))
-            print("Less than a day: " + str(s_correct / s_predicted) + ", " + str(s_correct / s_labeled))
-            print("Longer than a day: " + str(l_correct / l_predicted) + ", " + str(l_correct / l_labeled))
+            pre = s_correct / s_predicted
+            rec = s_correct / s_labeled
+            f1 = pre * rec * 2 / (pre + rec)
+            print("Less than a day: " + str(f1))
+            pre = l_correct / l_predicted
+            rec = l_correct / l_labeled
+            f1 = pre * rec * 2 / (pre + rec)
+            print("Longer than a day: " + str(f1))
 
 
 
@@ -316,7 +325,7 @@ if __name__ == "__main__":
     )
     print(len(runner.train_data))
     print(len(runner.eval_data))
-    runner.train(runner.train_data, epoch=1000, batch_size=32)
+    runner.train(runner.train_data, epoch=100, batch_size=32)
     runner.eval(runner.train_data, None)
     print(runner.train_data[-1].input_verb)
-    runner.eval(runner.eval_data, "timebank_result.txt")
+    runner.eval(runner.eval_data, None)

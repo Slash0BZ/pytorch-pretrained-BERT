@@ -13,6 +13,7 @@ import torch.nn.functional as F
 import numpy as np
 import gensim
 import os
+from torch.optim.lr_scheduler import LambdaLR
 
 
 class LayerNorm(nn.Module):
@@ -35,37 +36,31 @@ class VerbPhysicsClassification(nn.Module):
     def __init__(self, num_labels, input_size, glove_size):
         super(VerbPhysicsClassification, self).__init__()
         self.num_labels = num_labels
-        self.dropout = nn.Dropout(0.2)
-        self.hidden_size = 768
+        self.dropout = nn.Dropout(0.1)
 
-        self.classifier_1 = nn.Linear(input_size, self.hidden_size)
-        self.classifier_2 = nn.Linear(input_size, self.hidden_size)
+        self.hidden_size = 1024
 
-        self.glove_classifier_1 = nn.Linear(glove_size, 32)
-        self.glove_classifier_2 = nn.Linear(glove_size, 32)
+        self.classifier_duration = nn.Linear(input_size, self.hidden_size)
+        self.classifier_duration_concat = nn.Linear(self.hidden_size * 2, 64)
 
-        self.classifier_duration = nn.Linear(self.hidden_size * 2, num_labels)
-        self.classifier_glove = nn.Linear(64, num_labels)
+        self.classifier_glove = nn.Linear(glove_size, self.hidden_size)
+        self.classifier_glove_concat = nn.Linear(self.hidden_size * 2, 64)
 
-        self.classifier_dim = nn.Linear(glove_size, num_labels)
-
-        self.classifier = nn.Linear(num_labels * 2, num_labels)
+        self.classifier = nn.Linear(64, num_labels)
 
     def forward(self, input_1s, input_2s, embedding_1s, embedding_2s, dim_embeds, labels=None):
-        state_1 = F.relu(self.classifier_1(self.dropout(input_1s)))
-        state_2 = F.relu(self.classifier_2(self.dropout(input_2s)))
-        state = torch.cat((state_1, state_2), dim=1)
-        state = self.classifier_duration(state)
+        state_1 = F.relu(self.classifier_duration(self.dropout(input_1s)))
+        state_2 = F.relu(self.classifier_duration(self.dropout(input_2s)))
+        state = torch.cat((state_1, state_2), 1)
+        state = self.classifier_duration_concat(state)
 
-        state_glove_1 = F.relu(self.glove_classifier_1(embedding_1s))
-        state_glove_2 = F.relu(self.glove_classifier_2(embedding_2s))
-        state_glove = torch.cat((state_glove_1, state_glove_2), dim=1)
-        state_glove = F.relu(self.classifier_glove(state_glove))
+        state_glove_1 = F.relu(self.classifier_glove(self.dropout(embedding_1s)))
+        state_glove_2 = F.relu(self.classifier_glove(self.dropout(embedding_2s)))
+        state_glove = torch.cat((state_glove_1, state_glove_2), 1)
+        state_glove = self.classifier_glove_concat(state_glove)
 
-        state_dim = F.relu(self.classifier_dim(dim_embeds))
-
-        # logits = self.classifier(torch.cat((torch.cat((state, state_glove), dim=1), state_dim), dim=1))
-        logits = self.classifier(torch.cat((state, state_glove), dim=1))
+        logits = F.relu(state + state_glove)
+        logits = self.classifier(logits)
 
         if labels is not None:
             loss_fn = CrossEntropyLoss()
@@ -82,6 +77,22 @@ class FakeGlove:
 
     def get_vector(self, s):
         return self.vocab[s]
+
+
+class WarmupLinearSchedule(LambdaLR):
+    """ Linear warmup and then linear decay.
+        Linearly increases learning rate from 0 to 1 over `warmup_steps` training steps.
+        Linearly decreases learning rate from 1. to 0. over remaining `t_total - warmup_steps` steps.
+    """
+    def __init__(self, optimizer, warmup_steps, t_total, last_epoch=-1):
+        self.warmup_steps = warmup_steps
+        self.t_total = t_total
+        super(WarmupLinearSchedule, self).__init__(optimizer, self.lr_lambda, last_epoch=last_epoch)
+
+    def lr_lambda(self, step):
+        if step < self.warmup_steps:
+            return float(step) / float(max(1, self.warmup_steps))
+        return max(0.0, float(self.t_total - step) / float(max(1.0, self.t_total - self.warmup_steps)))
 
 
 class Runner:
@@ -103,7 +114,7 @@ class Runner:
 
     def __init__(self, train_data, dev_data, test_data, embedding_file):
         self.num_label = 3
-        self.input_size = 700
+        self.input_size = 180
         self.glove_size = 100
 
         # if os.path.isfile("./glove_cache.pkl"):
@@ -159,8 +170,8 @@ class Runner:
                 # self.cache_glove_map[obj_2] = glove_2
 
             instance = self.Instance(
-                self.embedding[obj_1], self.embedding[obj_2],
-                # [0] * 100, [0] * 100,
+                # self.embedding[obj_1], self.embedding[obj_2],
+                [0] * self.input_size, [0] * self.input_size,
                 glove_1, glove_2,
                 label_map[group[3]], self.num_label, self.input_size, 3,
                 list([0] * 100),
@@ -225,10 +236,12 @@ class Runner:
             return x / warmup
         return max((x-1.)/(warmup-1.), 0)
 
-    def train(self, epoch=5, batch_size=32, learning_rate=2e-5):
+    def train(self, epoch=5, batch_size=32, learning_rate=2e-4):
 
         parameters = filter(lambda p: p.requires_grad, self.model.parameters())
-        optimizer = torch.optim.Adam(parameters, lr=learning_rate)
+        optimizer = torch.optim.AdamW(parameters, lr=learning_rate)
+        scheduler = WarmupLinearSchedule(optimizer, warmup_steps=2500,
+                                         t_total=25000)
         loss_fn = nn.CrossEntropyLoss()
 
         data = []
@@ -264,7 +277,8 @@ class Runner:
 
                 loss.backward()
                 optimizer.step()
-                optimizer.zero_grad()
+                scheduler.step()
+                self.model.zero_grad()
 
                 global_step += 1
 
@@ -304,6 +318,7 @@ class Runner:
 
             with torch.no_grad():
                 logits = self.model(input_1s, input_2s, glove_1s, glove_2s, dim_embeds, None).detach().cpu().numpy()
+
             preds = np.argmax(logits, axis=1)
 
             all_preds += list(preds)
@@ -329,14 +344,12 @@ class Runner:
 
 if __name__ == "__main__":
     runner = Runner(
-        # train_data="samples/verbphysics/train-5/train.csv",
-        # dev_data="samples/verbphysics/train-5/dev.csv",
-        # test_data="samples/verbphysics/train-5/test.csv",
         train_data="samples/vp_clean/reannotations/train.csv",
         dev_data="samples/vp_clean/reannotations/dev.csv",
         test_data="samples/vp_clean/reannotations/test.csv",
-        embedding_file="samples/vp_clean/reannotations/obj_embedding_100v.pkl"
+        embedding_file="samples/vp_clean/reannotations/obj_embedding_20v_joint.pkl"
     )
-    runner.train(epoch=10000, batch_size=16)
+    runner.train(epoch=5000, batch_size=16)
+    runner.eval(runner.train_data)
     runner.eval(runner.dev_data)
     runner.eval(runner.test_data)

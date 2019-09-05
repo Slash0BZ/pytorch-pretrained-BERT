@@ -1889,17 +1889,23 @@ class VerbPhysicsEval:
             "break", "destroy", "smash", "split", "fight",
             "climb", "dig", "stack", "shake", "ride",
         ]
-        verbs_size = ["clean", "move", "make", "store", "hide", "climb", "hold", "wash"]
-        verbs_100 = ["be", "hold", "play", "have", "go", "work", "make", "take", "wait", "do", "live", "stay", "run", "lose", "kill", "win", "come", "see", "keep", "get", "rise", "suspend", "leave", "score", "meet", "fall", "pay", "remain", "spend", "sell", "increase", "serve", "cook", "put", "grow", "cut", "give", "close", "double", "receive", "sit", "become", "raise", "detain", "use", "complete", "return", "continue", "try", "hit", "open", "begin", "reach", "send", "drop", "fight", "die", "say", "start", "move", "turn", "build", "lead", "delay", "change", "bring", "speak", "miss", "provide", "ban", "stand", "set", "find", "finish", "reduce", "expect", "report", "jail", "beat", "talk", "happen", "sideline", "add", "simmer", "face", "sign", "invest", "show", "visit", "buy", "look", "stop", "know", "shut", "cost", "drive", "carry", "decide", "save", "bake"]
+        # verbs_size = ["clean", "move", "make", "store", "hide", "climb", "hold", "wash"]
+        verbs_20 = ["cleaned", "moved", "made", "stored", "hid", "climbed", "held", "washed", "carried", "threw",
+                    "built", "kicked", "split", "cut", "broke", "smashed", "opened", "cleaned", "shook", "turned",
+                    ]
+        # verbs_100 = ["be", "hold", "play", "have", "go", "work", "make", "take", "wait", "do", "live", "stay", "run", "lose", "kill", "win", "come", "see", "keep", "get", "rise", "suspend", "leave", "score", "meet", "fall", "pay", "remain", "spend", "sell", "increase", "serve", "cook", "put", "grow", "cut", "give", "close", "double", "receive", "sit", "become", "raise", "detain", "use", "complete", "return", "continue", "try", "hit", "open", "begin", "reach", "send", "drop", "fight", "die", "say", "start", "move", "turn", "build", "lead", "delay", "change", "bring", "speak", "miss", "provide", "ban", "stand", "set", "find", "finish", "reduce", "expect", "report", "jail", "beat", "talk", "happen", "sideline", "add", "simmer", "face", "sign", "invest", "show", "visit", "buy", "look", "stop", "know", "shut", "cost", "drive", "carry", "decide", "save", "bake"]
 
-        verbs = verbs_100
+        verbs = verbs_20
         pronouns = ["he", "they", "I", "she"]
         rest = "\t1\t1.0 hour\twalk\t0\t1.0 hour\tNONE\n"
         f_out = open(out_path, "w")
         for obj in obj_set:
             for v in verbs:
                 for p in pronouns:
-                    sentence = p + " " + v + " " + obj + " ."
+                    pro = "a"
+                    if obj[0] in ['a', 'e', 'i', 'o', 'u']:
+                        pro = "an"
+                    sentence = p + " " + v + " " + pro + " " + obj + " ."
                     f_out.write(sentence + rest)
 
     def add_list(self, a, b):
@@ -1920,15 +1926,15 @@ class VerbPhysicsEval:
         obj_map = {}
         for i, l in enumerate(sent_lines):
             sent = l.split("\t")[0]
-            obj = sent.split()[2]
+            obj = sent.split()[3]
             verb = sent.split()[1]
 
             if obj not in obj_map:
                 obj_map[obj] = {}
             if verb not in obj_map[obj]:
-                obj_map[obj][verb] = [0.0] * 7
+                obj_map[obj][verb] = [0.0] * 9
 
-            probs = [math.exp(float(x)) for x in embed_lines[i].split('\t')[0:7]]
+            probs = [math.exp(float(x)) for x in embed_lines[i].split('\t')[0:9]]
             prob_sum = sum(probs)
             probs = [x / float(prob_sum) for x in probs]
             # vector = [float(x) * float(i) for i, x in enumerate(probs)]
@@ -1946,14 +1952,18 @@ class VerbPhysicsEval:
         #     "break", "destroy", "smash", "split", "fight",
         #     "climb", "dig", "stack", "shake", "ride",
         # ]
-        verbs = ["be", "hold", "play", "have", "go", "work", "make", "take", "wait", "do", "live", "stay", "run", "lose", "kill", "win", "come", "see", "keep", "get", "rise", "suspend", "leave", "score", "meet", "fall", "pay", "remain", "spend", "sell", "increase", "serve", "cook", "put", "grow", "cut", "give", "close", "double", "receive", "sit", "become", "raise", "detain", "use", "complete", "return", "continue", "try", "hit", "open", "begin", "reach", "send", "drop", "fight", "die", "say", "start", "move", "turn", "build", "lead", "delay", "change", "bring", "speak", "miss", "provide", "ban", "stand", "set", "find", "finish", "reduce", "expect", "report", "jail", "beat", "talk", "happen", "sideline", "add", "simmer", "face", "sign", "invest", "show", "visit", "buy", "look", "stop", "know", "shut", "cost", "drive", "carry", "decide", "save", "bake"]
-        embedding_file = open("samples/vp_clean/reannotations/obj_embedding_100v.pkl", "wb")
+        # verbs = ["be", "hold", "play", "have", "go", "work", "make", "take", "wait", "do", "live", "stay", "run", "lose", "kill", "win", "come", "see", "keep", "get", "rise", "suspend", "leave", "score", "meet", "fall", "pay", "remain", "spend", "sell", "increase", "serve", "cook", "put", "grow", "cut", "give", "close", "double", "receive", "sit", "become", "raise", "detain", "use", "complete", "return", "continue", "try", "hit", "open", "begin", "reach", "send", "drop", "fight", "die", "say", "start", "move", "turn", "build", "lead", "delay", "change", "bring", "speak", "miss", "provide", "ban", "stand", "set", "find", "finish", "reduce", "expect", "report", "jail", "beat", "talk", "happen", "sideline", "add", "simmer", "face", "sign", "invest", "show", "visit", "buy", "look", "stop", "know", "shut", "cost", "drive", "carry", "decide", "save", "bake"]
+        verbs = ["cleaned", "moved", "made", "stored", "hid", "climbed", "held", "washed", "carried", "threw",
+                 "built", "kicked", "split", "cut", "broke", "smashed", "opened", "cleaned", "shook", "turned",
+                ]
+        embedding_file = open("samples/vp_clean/reannotations/obj_embedding_20v_joint.pkl", "wb")
         embed_map = {}
         for key in obj_map:
             if key not in embed_map:
                 embed_map[key] = []
             for v in verbs:
                 embed_map[key].extend(self.div_list(obj_map[key][v], 4.0))
+            print(len(embed_map[key]))
 
         pickle.dump(embed_map, embedding_file)
 
@@ -2060,8 +2070,8 @@ if __name__ == "__main__":
     # verbphysics.process_raw_file([
     #     "samples/vp_clean/reannotations/train.csv",
     #     "samples/vp_clean/reannotations/test.csv",
-    #     "samples/vp_clean/reannotations/dev.csv"], "samples/vp_clean/reannotations/obj_file_100v.txt")
-    verbphysics.process_embedding_file("samples/vp_clean/reannotations/obj_file_100v.txt", "bert_vp_eval/bert_logits.txt")
+    #     "samples/vp_clean/reannotations/dev.csv"], "samples/vp_clean/reannotations/obj_file_20v.txt")
+    verbphysics.process_embedding_file("samples/vp_clean/reannotations/obj_file_20v.txt", "bert_vp_eval/bert_logits.txt")
     # verbphysics.process_raw_file([
     #     "samples/verbphysics/train-5/train.csv",
     #     "samples/verbphysics/train-5/test.csv",

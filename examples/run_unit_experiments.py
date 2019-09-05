@@ -316,6 +316,7 @@ class DataReader:
             "week": "weeks",
             "month": "months",
             "year": "years",
+            "decade": "decades",
             "century": "centuries",
         }
         if u in m:
@@ -342,9 +343,7 @@ class DataReader:
             tokens = sentence.split()
             for i, t in enumerate(tokens):
                 if t.lower() in self.duration_keys and i != 0 and self.quantity(tokens[i - 1]) is not None:
-                    if t.lower() == "century" or t.lower() == "centuries":
-                        continue
-                    if random.random() < 0.01:
+                    if random.random() < 0.001:
                         ret.append((tokens, i))
         return ret
 
@@ -452,6 +451,7 @@ class Evaluator:
             "week": "weeks",
             "month": "months",
             "year": "years",
+            "decade": "decades",
             "century": "centuries",
         }
         self.duration_val = {
@@ -462,6 +462,8 @@ class Evaluator:
             "weeks": 4,
             "months": 5,
             "years": 6,
+            "decades": 7,
+            "centuries": 8
         }
         self.duration_val_full = {
             "instantaneous": 0,
@@ -521,21 +523,18 @@ class Evaluator:
 def train_and_eval_bert():
     BLM = BERT_LM_predictions()
     data = DataReader("samples/duration/verb_formatted_all_svo_better_filter_non_mask.txt")
-    # data = DataReader("samples/UD_English/test/formatted.txt")
     results = []
     count = 0
+    count_map = {}
     for tokens, pos in data.get():
         gold = tokens[pos].lower()
         val = data.quantity(tokens[pos - 1])
-        # gold, new_num = data.normalize_timex(val, gold)
+        gold, new_num = data.normalize_timex(val, gold)
+        if gold not in count_map:
+            count_map[gold] = 0
+        count_map[gold] += 1
         tokens[pos] = "[MASK]"
         tokens[pos - 1] = "one"
-        # new_tokens = []
-        # for i in range(0, len(tokens)):
-            # if i != pos - 1:
-            #     new_tokens.append(tokens[i])
-        # pos = pos - 1
-        # tokens = new_tokens
         ps = BLM.calculate_bert_masked_per_token(tokens)[0][pos]
         selected_p = '404'
         for p in ps:
@@ -551,6 +550,7 @@ def train_and_eval_bert():
 
     evaluator = Evaluator("unit_exp_output.pkl")
     evaluator.print_results()
+    print(count_map)
 
 
 def train_and_eval_bert_on_udst():
@@ -906,6 +906,7 @@ def eval_combined_pair_data(gold_path, predict_logits, optimize=True):
     classification_distance = 0.0
     count_map = {}
     prediction_count_map = {}
+    per_label_map = {}
     for i in range(0, len(gold_lines)):
         groups = gold_lines[i].split("\t")
         label_a = groups[2].lower()
@@ -962,18 +963,35 @@ def eval_combined_pair_data(gold_path, predict_logits, optimize=True):
             # else:
             #     classification_total -= 1.0
             # if count_map[label_a] < 250:
-            classification_distance += float(abs(distance_map[label_a] - distance_map[prediction_a]))
+            cur_dist = float(abs(distance_map[label_a] - distance_map[prediction_a]))
+            classification_distance += cur_dist
             classification_total += 1.0
+            if cur_dist > 2.0:
+                print(groups[0] + " " + groups[1])
+                print(label_a)
+                print(prediction_a)
+                print()
+
+            if label_a not in per_label_map:
+                per_label_map[label_a] = [0.0, 0.0]
+            per_label_map[label_a][0] += float(abs(distance_map[label_a] - distance_map[prediction_a]))
+            per_label_map[label_a][1] += 1.0
             # if count_map[label_b] < 250:
             classification_distance += float(abs(distance_map[label_b] - distance_map[prediction_b]))
             classification_total += 1.0
-    if pair_total != 0.0:
-        print("Pairwise Acc.: " + str(pair_correct / pair_total))
+            if label_b not in per_label_map:
+                per_label_map[label_b] = [0.0, 0.0]
+            per_label_map[label_b][0] += float(abs(distance_map[label_b] - distance_map[prediction_b]))
+            per_label_map[label_b][1] += 1.0
+    # if pair_total != 0.0:
+    #     print("Pairwise Acc.: " + str(pair_correct / pair_total))
     if classification_total != 0.0:
         print("Classification Dist.: " + str(classification_distance / classification_total))
-    print(pair_total)
-    print(count_map)
-    print(prediction_count_map)
+    # print(pair_total)
+    # print(count_map)
+    # print(prediction_count_map)
+    # for key in per_label_map:
+    #     print(key + ": " + str(per_label_map[key][0] / per_label_map[key][1]))
 
 
 def eval_bert_custom():
@@ -1432,7 +1450,7 @@ class HTMLFormatter:
 
 
 # eval_combined_pair_data("samples/UD_English_SRL/test.formatted.txt", "predictions/best_joint_on_udst.txt", optimize=False)
-eval_combined_pair_data("samples/UD_English_SRL_9label/test.formatted.txt", "bert_udst_eval/bert_logits.txt", optimize=False)
+# eval_combined_pair_data("samples/UD_English_SRL_9label/test.formatted.txt", "bert_udst_eval/bert_logits.txt", optimize=False)
 # eval_combined_pair_data("samples/combine_test/test.formatted.txt", "bert_classification_eval/bert_logits.txt", optimize=False)
 # compare_predictions("samples/UD_English_SRL/test.formatted.txt",
 #                     "bert_logits.txt",
@@ -1452,3 +1470,25 @@ eval_combined_pair_data("samples/UD_English_SRL_9label/test.formatted.txt", "ber
 
 # formatter = HTMLFormatter("samples/UD_English_SRL/test.formatted.txt", "predictions/best_joint_on_udst.txt", "bert_vanilla/bert_logits.txt",)
 # formatter.process("sample.html")
+
+# train_and_eval_bert()
+# eval_combined_pair_data("samples/combine_test/test.formatted.txt", "bert_combine_02rel_02lm/bert_logits.txt", optimize=False)
+# eval_combined_pair_data("samples/combine_test/test.formatted.txt", "bert_combine_04rel_04lm/bert_logits.txt", optimize=False)
+optimize = True
+postfix = "_direct_avg"
+# print("Joint Soft Loss")
+# eval_combined_pair_data("samples/UD_English_SRL_9label_avg/test.formatted.txt", "bert_udst_joint_softloss" + postfix + "/bert_logits.txt", optimize=optimize)
+# print("Joint Soft Loss 0.06 Prob LM")
+# eval_combined_pair_data("samples/UD_English_SRL_9label_avg/test.formatted.txt", "bert_udst_joint_softloss_006prob" + postfix + "/bert_logits.txt", optimize=optimize)
+# print("Joint Soft Loss 40% LM")
+# eval_combined_pair_data("samples/UD_English_SRL_9label_avg/test.formatted.txt", "bert_udst_joint_softloss_lm_04" + postfix + "/bert_logits.txt", optimize=optimize)
+# print("Joint 0.4 Rel 0.4 LM")
+# eval_combined_pair_data("samples/UD_English_SRL_9label_avg/test.formatted.txt", "bert_udst_joint_softloss_04rel_04lm" + postfix + "/bert_logits.txt", optimize=optimize)
+# print("Joint 0.2 Rel 0.2 LM")
+# eval_combined_pair_data("samples/UD_English_SRL_9label_avg/test.formatted.txt", "bert_udst_joint_softloss_02rel_02lm" + postfix + "/bert_logits.txt", optimize=optimize)
+# print("Classification Soft Loss LM")
+# eval_combined_pair_data("samples/UD_English_SRL_9label_avg/test.formatted.txt", "bert_udst_classification_softloss_lm" + postfix + "/bert_logits.txt", optimize=optimize)
+# print("Joint 0.2 Rel")
+# eval_combined_pair_data("samples/UD_English_SRL_9label_avg/test.formatted.txt", "bert_udst_joint_softloss_smallrel" + postfix + "/bert_logits.txt", optimize=optimize)
+print("Joint Soft Loss LM")
+eval_combined_pair_data("samples/UD_English_SRL_9label_avg/test.formatted.txt", "bert_udst_joint_softloss_lm" + postfix + "/bert_logits.txt", optimize=optimize)

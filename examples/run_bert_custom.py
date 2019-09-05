@@ -65,7 +65,7 @@ class InputFeatures(object):
 
     def __init__(self, input_ids_a, input_ids_b, input_mask_a, input_mask_b, segment_ids_a, segment_ids_b,
                  label_id_a, label_id_b, target_idx_a, target_idx_b, adjustment_a, adjustment_b,
-                 soft_target_a, soft_target_b, rel_soft_target):
+                 soft_target_a, soft_target_b, lm_labels_a, lm_labels_b, rel_soft_target):
         self.input_ids_a = input_ids_a
         self.input_ids_b = input_ids_b
         self.input_mask_a = input_mask_a
@@ -80,6 +80,8 @@ class InputFeatures(object):
         self.adjustment_b = adjustment_b
         self.soft_target_a = soft_target_a
         self.soft_target_b = soft_target_b
+        self.lm_labels_a = lm_labels_a
+        self.lm_labels_b = lm_labels_b
         self.rel_soft_target = rel_soft_target
 
 
@@ -234,7 +236,9 @@ class TemporalVerbProcessor(DataProcessor):
                 if label_a in ["instantaneous", "forever"] or label_b in ["instantaneous", "forever"]:
                     continue
 
+                """CHECK HERE"""
                 if label_a == "NONE" or label_b == "NONE":
+                    # pass
                     continue
 
                 examples.append(
@@ -269,13 +273,54 @@ class TemporalVerbProcessor(DataProcessor):
         return examples
 
 
+def randomize_tokens(tokens, tokenizer):
+    output_label = []
+
+    for i, token in enumerate(tokens):
+        prob = random.random()
+        # mask token with 15% probability
+        if prob < 0.15:
+            prob /= 0.15
+
+            # 80% randomly change token to mask token
+            if prob < 0.8:
+                tokens[i] = "[MASK]"
+
+            # 10% randomly change token to random token
+            elif prob < 0.9:
+                tokens[i] = random.choice(list(tokenizer.vocab.items()))[0]
+
+            # -> rest 10% randomly keep current token
+
+            # append current token to output (we will predict these later)
+            try:
+                output_label.append(tokenizer.vocab[token])
+            except KeyError:
+                # For unknown words (should not occur with BPE vocab)
+                output_label.append(tokenizer.vocab["[UNK]"])
+                # logger.warning("Cannot find token '{}' in vocab. Using [UNK] insetad".format(token))
+        else:
+            # no masking token (will be ignored by loss function later)
+            output_label.append(-1)
+
+    return tokens, output_label
+
+
 def convert_single_pair(text, target_idx, label, tokenizer, max_seq_length, label_map):
     tokens = text.lower().split()
+    """
+    MASKING TOKENS FOR LM LOSSES
+    """
+    # tokens, masking_labels = randomize_tokens(tokens, tokenizer)
+    # masking_labels = [-1] + masking_labels + [-1]
+    masking_labels = [-1] * (len(tokens) + 2)
+    """"""
     tokens = ["[CLS]"] + tokens + ["[SEP]"]
     segment_ids = [0] * len(tokens)
     input_ids = tokenizer.convert_tokens_to_ids(tokens)
     input_mask = [1] * len(input_ids)
     padding = [0] * (max_seq_length - len(input_ids))
+    masking_labels += [-1] * (max_seq_length - len(input_ids))
     input_ids += padding
     input_mask += padding
     segment_ids += padding
@@ -314,7 +359,7 @@ def convert_single_pair(text, target_idx, label, tokenizer, max_seq_length, labe
     if label_id > -1:
         adjustment = weight_map[label_id]
 
-    return input_ids, input_mask, segment_ids, label_id, target_idx + 1, adjustment, soft_labels
+    return input_ids, input_mask, segment_ids, label_id, target_idx + 1, adjustment, soft_labels, masking_labels
 
 
 def convert_examples_to_features(examples, label_list, max_seq_length,
@@ -328,18 +373,29 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
         if ex_index % 10000 == 0:
             logger.info("Writing example %d of %d" % (ex_index, len(examples)))
 
-        input_ids_a, input_mask_a, segment_ids_a, label_id_a, target_idx_a, adjustment_a, soft_labels_a = convert_single_pair(
+        input_ids_a, input_mask_a, segment_ids_a, label_id_a, target_idx_a, adjustment_a, soft_labels_a, lm_labels_a = convert_single_pair(
             example.text_a, example.target_idx_a, example.label_a, tokenizer, max_seq_length, label_map
         )
 
         if example.text_b is not None:
-            input_ids_b, input_mask_b, segment_ids_b, label_id_b, target_idx_b, adjustment_b, soft_labels_b = convert_single_pair(
+            input_ids_b, input_mask_b, segment_ids_b, label_id_b, target_idx_b, adjustment_b, soft_labels_b, lm_labels_b = convert_single_pair(
                 example.text_b, example.target_idx_b, example.label_b, tokenizer, max_seq_length, label_map
             )
         else:
-            input_ids_b, input_mask_b, segment_ids_b, label_id_b, target_idx_b, adjustment_b, soft_labels_b = [None] * len(label_list)
+            print("ERROR!")
+            input_ids_b, input_mask_b, segment_ids_b, label_id_b, target_idx_b, adjustment_b, soft_labels_b, lm_labels_b = [None] * len(label_list)
 
         rel_soft_labels = [0.0] * 2
+        """
+        Converting Labels
+        """
+        # if example.rel_label == "NONE":
+        #     if abs(label_id_a - label_id_b) > 1:
+        #         if label_id_a > label_id_b:
+        #             example.rel_label = "MORE"
+        #         else:
+        #             example.rel_label = "LESS"
+        """END"""
         if example.rel_label == "LESS":
             rel_soft_labels[0] = 1.0
         elif example.rel_label == "MORE":
@@ -351,6 +407,9 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
                 [str(x) for x in example.text_a.split()]))
             logger.info("label: %s" % example.label_a)
             logger.info("soft label: %s" % " ".join(str(x) for x in soft_labels_a))
+            logger.info("input ids: %s" % " ".join(str(x) for x in input_ids_a))
+            logger.info("LM label: %s" % " ".join(str(x) for x in lm_labels_a))
+            logger.info("Classification label: %s" % label_id_a)
 
         features.append(
             InputFeatures(
@@ -368,6 +427,8 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
                 adjustment_b=adjustment_b,
                 soft_target_a=soft_labels_a,
                 soft_target_b=soft_labels_b,
+                lm_labels_a=lm_labels_a,
+                lm_labels_b=lm_labels_b,
                 rel_soft_target=rel_soft_labels
             )
         )
@@ -427,7 +488,8 @@ def weighted_l1_loss_pair(logits, target_a, target_b):
     return weighted_l1_loss(logits.narrow(1, 0, 11), target_a) + weighted_l1_loss(logits.narrow(1, 11, 11), target_b)
 
 
-def soft_cross_entropy_loss(logits, soft_target_a, adjustment_a, soft_target_b, adjustment_b, rel_soft_targets, num_labels):
+def soft_cross_entropy_loss(logits, cls_a, cls_b, soft_target_a, adjustment_a, lm_labels_a,
+                            soft_target_b, adjustment_b, lm_labels_b, rel_soft_targets, num_labels, lm_loss):
     logits_a = logits.narrow(1, 0, num_labels)
     logits_b = logits.narrow(1, num_labels, num_labels)
     logits_rel = logits.narrow(1, 2 * num_labels, 2)
@@ -440,9 +502,13 @@ def soft_cross_entropy_loss(logits, soft_target_a, adjustment_a, soft_target_b, 
 
     loss_rel = -rel_soft_targets * nn.functional.log_softmax(logits_rel, -1)
     loss_rel = torch.sum(loss_rel, -1)
-    mean_loss = loss_a.mean() + loss_b.mean() + loss_rel.mean()
+    mean_loss = loss_a.mean() + loss_b.mean() + 0.2 * loss_rel.mean()
 
-    return mean_loss, loss_a.mean() + loss_b.mean(), loss_rel.mean()
+    # lm_loss_fn = CrossEntropyLoss(ignore_index=-1)
+    # lm_loss = lm_loss_fn(cls_a.view(-1, 30522), lm_labels_a.view(-1)) + lm_loss_fn(cls_b.view(-1, 30522), lm_labels_b.view(-1))
+
+    """CHANGE!!"""
+    return mean_loss, (loss_a.mean() + loss_b.mean()).item(), loss_rel.mean().item()
 
 
 def cross_entropy_loss(loss, logits, rel_soft_targets):
@@ -694,6 +760,7 @@ def main():
         all_soft_targets_a = torch.tensor([f.soft_target_a for f in train_features], dtype=torch.float)
         all_adjustments_a = torch.tensor([f.adjustment_a for f in train_features], dtype=torch.float)
         all_label_ids_a = torch.tensor([f.label_id_a for f in train_features], dtype=torch.long)
+        all_lm_labels_a = torch.tensor([f.lm_labels_a for f in train_features], dtype=torch.long)
 
         all_input_ids_b = torch.tensor([f.input_ids_b for f in train_features], dtype=torch.long)
         all_input_mask_b = torch.tensor([f.input_mask_b for f in train_features], dtype=torch.long)
@@ -702,13 +769,14 @@ def main():
         all_soft_targets_b = torch.tensor([f.soft_target_b for f in train_features], dtype=torch.float)
         all_adjustments_b = torch.tensor([f.adjustment_b for f in train_features], dtype=torch.float)
         all_label_ids_b = torch.tensor([f.label_id_b for f in train_features], dtype=torch.long)
+        all_lm_labels_b = torch.tensor([f.lm_labels_b for f in train_features], dtype=torch.long)
 
         all_rel_labels = torch.tensor([f.rel_soft_target for f in train_features], dtype=torch.float)
 
         train_data = TensorDataset(
             all_input_ids_a, all_input_mask_a, all_segment_ids_a, all_target_idxs_a, all_soft_targets_a, all_adjustments_a,
             all_input_ids_b, all_input_mask_b, all_segment_ids_b, all_target_idxs_b, all_soft_targets_b, all_adjustments_b,
-            all_rel_labels, all_label_ids_a, all_label_ids_b
+            all_rel_labels, all_label_ids_a, all_label_ids_b, all_lm_labels_a, all_lm_labels_b
         )
         if args.local_rank == -1:
             train_sampler = RandomSampler(train_data)
@@ -742,18 +810,21 @@ def main():
                 batch = tuple(t.to(device) for t in batch)
                 input_ids_a, input_mask_a, segment_ids_a, target_ids_a, soft_targets_a, adjustments_a, \
                 input_ids_b, input_mask_b, segment_ids_b, target_ids_b, soft_targets_b, adjustments_b, rel_labels, \
-                label_ids_a, label_ids_b = batch
+                label_ids_a, label_ids_b, lm_labels_a, lm_labels_b = batch
 
                 # define a new function to compute loss values for both output_modes
-                logits = model(
+                logits, lm_loss = model(
                     input_ids_a, segment_ids_a, input_mask_a, target_ids_a,
                     input_ids_b, segment_ids_b, input_mask_b, target_ids_b,
+                    lm_labels_a, lm_labels_b
                 )
+                # loss = lm_loss
 
                 loss, label_loss, rel_loss = soft_cross_entropy_loss(
-                    logits.view(-1, num_labels * 2 + 2), soft_targets_a, adjustments_a,
-                    soft_targets_b, adjustments_b,
-                    rel_labels, len(label_list),
+                    logits.view(-1, num_labels * 2 + 2), None, None,
+                    soft_targets_a, adjustments_a, None,
+                    soft_targets_b, adjustments_b, None,
+                    rel_labels, len(label_list), lm_loss
                 )
 
                 # loss = weighted_l1_loss_pair(
@@ -784,6 +855,10 @@ def main():
                 epoch_loss += loss.item()
                 epoch_label_loss += label_loss
                 epoch_rel_loss += rel_loss
+
+                """
+                Release losses
+                """
                 # if step % 1 == 0:
                 #     print(model.bert_temporal.encoder.layer[0].intermediate.dense.weight)
                 if step % 100 == 0:
@@ -935,9 +1010,9 @@ def main():
             input_ids_b, input_mask_b, segment_ids_b, target_ids_b, soft_targets_b, adjustments_b, rel_labels = batch
 
             with torch.no_grad():
-                logits = model(
+                logits, _ = model(
                     input_ids_a, segment_ids_a, input_mask_a, target_ids_a,
-                    input_ids_b, segment_ids_b, input_mask_b, target_ids_b,
+                    input_ids_b, segment_ids_b, input_mask_b, target_ids_b, None, None
                 )
 
             w_ready_logits = logits.detach().cpu().numpy()

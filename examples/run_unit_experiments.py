@@ -875,7 +875,7 @@ def eval_combined_pair_data(gold_path, predict_logits, optimize=True):
     for line in gold_lines:
         groups = line.split("\t")
         if groups[2] == "NONE":
-            # filtered_gold_lines.append(line)
+            filtered_gold_lines.append(line)
             continue
         if len(groups[0].split()) > 120 or len(groups[3].split()) > 120:
             continue
@@ -966,11 +966,11 @@ def eval_combined_pair_data(gold_path, predict_logits, optimize=True):
             cur_dist = float(abs(distance_map[label_a] - distance_map[prediction_a]))
             classification_distance += cur_dist
             classification_total += 1.0
-            if cur_dist > 2.0:
-                print(groups[0] + " " + groups[1])
-                print(label_a)
-                print(prediction_a)
-                print()
+            # if cur_dist > 2.0:
+            #     print(groups[0] + " " + groups[1])
+            #     print(label_a)
+            #     print(prediction_a)
+            #     print()
 
             if label_a not in per_label_map:
                 per_label_map[label_a] = [0.0, 0.0]
@@ -983,8 +983,8 @@ def eval_combined_pair_data(gold_path, predict_logits, optimize=True):
                 per_label_map[label_b] = [0.0, 0.0]
             per_label_map[label_b][0] += float(abs(distance_map[label_b] - distance_map[prediction_b]))
             per_label_map[label_b][1] += 1.0
-    # if pair_total != 0.0:
-    #     print("Pairwise Acc.: " + str(pair_correct / pair_total))
+    if pair_total != 0.0:
+        print("Pairwise Acc.: " + str(pair_correct / pair_total))
     if classification_total != 0.0:
         print("Classification Dist.: " + str(classification_distance / classification_total))
     # print(pair_total)
@@ -1474,21 +1474,39 @@ class HTMLFormatter:
 # train_and_eval_bert()
 # eval_combined_pair_data("samples/combine_test/test.formatted.txt", "bert_combine_02rel_02lm/bert_logits.txt", optimize=False)
 # eval_combined_pair_data("samples/combine_test/test.formatted.txt", "bert_combine_04rel_04lm/bert_logits.txt", optimize=False)
-optimize = True
-postfix = "_direct_avg"
+
+optimize = False
+postfix = ""
+test_file = "samples/UD_English_SRL_9label_small/test.formatted.txt"
+print("Vanilla")
+eval_combined_pair_data(test_file, "bert_udst_vanilla" + postfix + "/bert_logits.txt", optimize=optimize)
+print("Vanilla + LM")
+eval_combined_pair_data(test_file, "bert_udst_lm" + postfix + "/bert_logits.txt", optimize=optimize)
 # print("Joint Soft Loss")
-# eval_combined_pair_data("samples/UD_English_SRL_9label_avg/test.formatted.txt", "bert_udst_joint_softloss" + postfix + "/bert_logits.txt", optimize=optimize)
+# eval_combined_pair_data(test_file, "bert_udst_joint_softloss" + postfix + "/bert_logits.txt", optimize=optimize)
 # print("Joint Soft Loss 0.06 Prob LM")
-# eval_combined_pair_data("samples/UD_English_SRL_9label_avg/test.formatted.txt", "bert_udst_joint_softloss_006prob" + postfix + "/bert_logits.txt", optimize=optimize)
+# eval_combined_pair_data(test_file, "bert_udst_joint_softloss_006prob" + postfix + "/bert_logits.txt", optimize=optimize)
 # print("Joint Soft Loss 40% LM")
-# eval_combined_pair_data("samples/UD_English_SRL_9label_avg/test.formatted.txt", "bert_udst_joint_softloss_lm_04" + postfix + "/bert_logits.txt", optimize=optimize)
+# eval_combined_pair_data(test_file, "bert_udst_joint_softloss_lm_04" + postfix + "/bert_logits.txt", optimize=optimize)
 # print("Joint 0.4 Rel 0.4 LM")
-# eval_combined_pair_data("samples/UD_English_SRL_9label_avg/test.formatted.txt", "bert_udst_joint_softloss_04rel_04lm" + postfix + "/bert_logits.txt", optimize=optimize)
+# eval_combined_pair_data(test_file, "bert_udst_joint_softloss_04rel_04lm" + postfix + "/bert_logits.txt", optimize=optimize)
 # print("Joint 0.2 Rel 0.2 LM")
-# eval_combined_pair_data("samples/UD_English_SRL_9label_avg/test.formatted.txt", "bert_udst_joint_softloss_02rel_02lm" + postfix + "/bert_logits.txt", optimize=optimize)
-# print("Classification Soft Loss LM")
-# eval_combined_pair_data("samples/UD_English_SRL_9label_avg/test.formatted.txt", "bert_udst_classification_softloss_lm" + postfix + "/bert_logits.txt", optimize=optimize)
+# eval_combined_pair_data(test_file, "bert_udst_joint_softloss_02rel_02lm" + postfix + "/bert_logits.txt", optimize=optimize)
+print("Classification Soft Loss LM")
+eval_combined_pair_data(test_file, "bert_udst_classification_softloss_lm" + postfix + "/bert_logits.txt", optimize=optimize)
 # print("Joint 0.2 Rel")
-# eval_combined_pair_data("samples/UD_English_SRL_9label_avg/test.formatted.txt", "bert_udst_joint_softloss_smallrel" + postfix + "/bert_logits.txt", optimize=optimize)
+# eval_combined_pair_data(test_file, "bert_udst_joint_softloss_smallrel" + postfix + "/bert_logits.txt", optimize=optimize)
 print("Joint Soft Loss LM")
-eval_combined_pair_data("samples/UD_English_SRL_9label_avg/test.formatted.txt", "bert_udst_joint_softloss_lm" + postfix + "/bert_logits.txt", optimize=optimize)
+eval_combined_pair_data(test_file, "bert_udst_joint_softloss_lm" + postfix + "/bert_logits.txt", optimize=optimize)
+
+# optimize = True
+# postfix = ""
+# test_file = "samples/conceptnet/test.formatted.txt"
+# print("Vanilla + LM")
+# eval_combined_pair_data(test_file, "bert_conceptnet_lm/bert_logits.txt", optimize=optimize)
+# print("Vanilla")
+# eval_combined_pair_data(test_file, "bert_conceptnet_vanilla/bert_logits.txt", optimize=optimize)
+# print("Joint Soft Loss LM")
+# eval_combined_pair_data(test_file, "bert_conceptnet_joint_softloss_LM" + postfix + "/bert_logits.txt", optimize=optimize)
+# print("Classification Soft Loss LM")
+# eval_combined_pair_data(test_file, "bert_conceptnet_classification_softloss_LM" + postfix + "/bert_logits.txt", optimize=optimize)

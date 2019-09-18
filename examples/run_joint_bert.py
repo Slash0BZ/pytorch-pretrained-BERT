@@ -50,7 +50,7 @@ class InputExample(object):
     """A single training/test example for simple sequence classification."""
 
     def __init__(self, guid, text_a, text_b, label_a, label_b, target_idx_a,
-                 target_idx_b, rel_label):
+                 target_idx_b, rel_label, inst_type):
         self.guid = guid
         self.text_a = text_a
         self.text_b = text_b
@@ -59,6 +59,7 @@ class InputExample(object):
         self.target_idx_a = target_idx_a
         self.target_idx_b = target_idx_b
         self.rel_label = rel_label
+        self.inst_type = inst_type
 
 
 class InputFeatures(object):
@@ -138,17 +139,6 @@ class TemporalVerbProcessor(DataProcessor):
 
     def get_labels(self):
         return [
-            # "instantaneous",
-            # "seconds",
-            # "minutes",
-            # "hours",
-            # "days",
-            # "weeks",
-            # "months",
-            # "years",
-            # "decades",
-            # "centuries",
-            # "forever",
             "seconds",
             "minutes",
             "hours",
@@ -233,40 +223,12 @@ class TemporalVerbProcessor(DataProcessor):
                         continue
                     label_b, _ = self.normalize_timex(label_b_num, label_b.split()[1].lower())
 
-                if label_a in ["instantaneous", "forever"] or label_b in ["instantaneous", "forever"]:
-                    continue
-
-                """CHECK HERE"""
-                if label_a == "NONE" or label_b == "NONE":
-                    # pass
-                    continue
-
                 examples.append(
                     InputExample(
                         guid=guid, text_a=text_a, text_b=text_b, label_a=label_a, label_b=label_b,
-                        target_idx_a=target_idx_a, target_idx_b=target_idx_b, rel_label=rel_label
+                        target_idx_a=target_idx_a, target_idx_b=target_idx_b, rel_label=rel_label, inst_type=groups[-1]
                     )
                 )
-            elif len(groups) == 9:
-                text_a = groups[0]
-                target_idx_a = int(groups[1])
-                label_a = groups[2]
-                if len(text_a.split()) > 120:
-                    continue
-                if label_a != "NONE":
-                    label_a_num = float(label_a.split()[0])
-                    if label_a_num < 1.0:
-                        continue
-                    label_a, _ = self.normalize_timex(label_a_num, label_a.split()[1].lower())
-                if label_a in ["instantaneous", "forever"]:
-                    continue
-                examples.append(
-                    InputExample(
-                        guid=guid, text_a=text_a, text_b=None, label_a=label_a, label_b=None,
-                        target_idx_a=target_idx_a, target_idx_b=None, rel_label=None
-                    )
-                )
-
             else:
                 continue
 

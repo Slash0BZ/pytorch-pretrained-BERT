@@ -1,4 +1,4 @@
-
+from ccg_nlpy import local_pipeline
 
 def parse_instance(group):
     key = group[0] + "\t" + group[1]
@@ -62,7 +62,31 @@ def convert_test_labels(path, out_path):
         f_out.write(new_instances[i] + "\t" + new_instances[i + 1] + "\tNONE\n")
 
 
-convert_test_labels("samples/UD_English_SRL_9label/test.formatted.txt", "samples/UD_English_SRL_9label_avg/test.formatted.txt")
+# convert_test_labels("samples/UD_English_SRL_9label/test.formatted.txt", "samples/UD_English_SRL_9label_avg/test.formatted.txt")
+
+def convert_mctaco_data(path, out_path):
+    lines = [x.strip() for x in open(path).readlines()]
+    pipeline = local_pipeline.LocalPipeline()
+    f_out = open(out_path, "w")
+    for line in lines:
+        sent = line.split("\t")[1]
+        doc = pipeline.doc(sent)
+        list_of_verbs = []
+        for i, token_group in enumerate(list(doc.get_pos)):
+            if token_group['label'].startswith("VB"):
+                list_of_verbs.append(token_group['tokens'])
+        if len(list_of_verbs) == 1:
+            f_out.write(line + "\t" + list_of_verbs[0] + "\n")
+        elif len(list_of_verbs) > 1:
+            if list_of_verbs[0].lower() in ['did', 'does', 'do', 'had', 'have', 'has', 'was', 'were', 'is', 'happened',
+                                            'happens', 'happen', 'be', 'is', 'are']:
+                f_out.write(line + "\t" + list_of_verbs[1] + "\n")
+            else:
+                f_out.write(line + "\t" + list_of_verbs[0] + "\n")
+        else:
+            f_out.write(line + "\tNONE\n")
 
 
+convert_mctaco_data("samples/split_30_70_good/dev.txt", "samples/split_30_70_good_verb/dev.txt")
+convert_mctaco_data("samples/split_30_70_good/test.txt", "samples/split_30_70_good_verb/test.txt")
 

@@ -625,43 +625,44 @@ class BertPreTrainedModel(nn.Module):
         for old_key, new_key in zip(old_keys, new_keys):
             state_dict[new_key] = state_dict.pop(old_key)
 
-        # Load vanilla BERT weights
-        # vanilla_archive_file = PRETRAINED_MODEL_ARCHIVE_MAP["bert-base-uncased"]
-        # resolved_vanilla_file = cached_path(vanilla_archive_file, cache_dir=cache_dir)
-        # tempdir = tempfile.mkdtemp()
-        # logger.info("extracting archive file {} to temp dir {}".format(
-        #     resolved_vanilla_file, tempdir))
-        # with tarfile.open(resolved_vanilla_file, 'r:gz') as archive:
-        #     archive.extractall(tempdir)
-        # vanilla_weights_path = os.path.join(tempdir, WEIGHTS_NAME)
-        # vanilla_state_dict = torch.load(vanilla_weights_path, map_location='cpu' if not torch.cuda.is_available() else None)
+        """ Load vanilla BERT weights """
+        vanilla_archive_file = PRETRAINED_MODEL_ARCHIVE_MAP["bert-base-uncased"]
+        resolved_vanilla_file = cached_path(vanilla_archive_file, cache_dir=cache_dir)
+        tempdir = tempfile.mkdtemp()
+        logger.info("extracting archive file {} to temp dir {}".format(
+            resolved_vanilla_file, tempdir))
+        with tarfile.open(resolved_vanilla_file, 'r:gz') as archive:
+            archive.extractall(tempdir)
+        vanilla_weights_path = os.path.join(tempdir, WEIGHTS_NAME)
+        vanilla_state_dict = torch.load(vanilla_weights_path, map_location='cpu' if not torch.cuda.is_available() else None)
 
-        # old_keys = []
-        # new_keys = []
-        # for key in vanilla_state_dict.keys():
-        #     new_key = None
-        #     if 'gamma' in key:
-        #         new_key = key.replace('gamma', 'weight')
-        #     if 'beta' in key:
-        #         new_key = key.replace('beta', 'bias')
-        #     if new_key:
-        #         old_keys.append(key)
-        #         new_keys.append(new_key)
-        # for old_key, new_key in zip(old_keys, new_keys):
-        #     vanilla_state_dict[new_key] = vanilla_state_dict.pop(old_key)
+        old_keys = []
+        new_keys = []
+        for key in vanilla_state_dict.keys():
+            new_key = None
+            if 'gamma' in key:
+                new_key = key.replace('gamma', 'weight')
+            if 'beta' in key:
+                new_key = key.replace('beta', 'bias')
+            if new_key:
+                old_keys.append(key)
+                new_keys.append(new_key)
+        for old_key, new_key in zip(old_keys, new_keys):
+            vanilla_state_dict[new_key] = vanilla_state_dict.pop(old_key)
 
+        old_keys = []
+        new_keys = []
+        for key in state_dict.keys():
+            if key.startswith("bert"):
+                lookup = key.replace("bert", "bert_vanilla")
+                old_keys.append(key)
+                new_keys.append(lookup)
+        for o, n in zip(old_keys, new_keys):
+            state_dict[n] = copy.deepcopy(vanilla_state_dict[o])
+        del vanilla_state_dict
         """
-        LOAD VANILLA WEIGHTS
+        LOAD VANILLA WEIGHTS END
         """
-        # old_keys = []
-        # new_keys = []
-        # for key in state_dict.keys():
-        #     if key.startswith("bert"):
-        #         lookup = key.replace("bert", "bert_vanilla")
-        #         old_keys.append(key)
-        #         new_keys.append(lookup)
-        # for o, n in zip(old_keys, new_keys):
-        #     state_dict[n] = copy.deepcopy(vanilla_state_dict[o])
 
         # copy_keys = []
         # orig_keys = []
@@ -1245,6 +1246,52 @@ class BertForSingleTokenClassification(BertPreTrainedModel):
         # return logits_a_b, None
 
 
+class BertForSingleTokenClassificationWithPooler(BertPreTrainedModel):
+    def __init__(self, config, num_labels):
+        super(BertForSingleTokenClassificationWithPooler, self).__init__(config)
+        self.num_labels = num_labels
+        self.bert = BertModel(config)
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+        self.log_softmax = nn.LogSoftmax(-1)
+        self.softmax = nn.Softmax(-1)
+
+        self.comparison_classifier = nn.Linear(config.hidden_size, 1)
+        self.label_classifier = nn.Linear(config.hidden_size, self.num_labels)
+        self.rel_classifier = nn.Linear(2, 2)
+
+        self.cls = BertOnlyMLMHead(config, self.bert.embeddings.word_embeddings.weight)
+        self.apply(self.init_bert_weights)
+
+        self.lm_loss_fn = CrossEntropyLoss(ignore_index=-1)
+
+    def get_single_inference(self, input_ids, token_type_ids, attention_mask, target_ids):
+        seq_output, target_all_output = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False)
+
+        pooled_output = self.dropout(target_all_output)
+        logits = self.label_classifier(pooled_output)
+        comparison_logits = self.comparison_classifier(pooled_output)
+
+        cls_logits = self.cls(seq_output)
+
+        return logits, comparison_logits, cls_logits
+
+    def compute_lm_loss(self, cls_output, labels):
+        if labels is None:
+            return None
+        lm_loss = self.lm_loss_fn(cls_output.view(-1, 30522), labels.view(-1))
+        return lm_loss
+
+    def forward(self, input_ids_a, token_type_ids_a, attention_mask_a, target_ids_a,
+                input_ids_b, token_type_ids_b, attention_mask_b, target_ids_b, lm_labels_a, lm_labels_b):
+        logits_a, comparison_logits_a, cls_a = self.get_single_inference(input_ids_a, token_type_ids_a, attention_mask_a, target_ids_a)
+        logits_b, comparison_logits_b, cls_b = self.get_single_inference(input_ids_b, token_type_ids_b, attention_mask_b, target_ids_b)
+
+        logits_a_b = torch.cat((logits_a, logits_b), -1)
+        logits_rel = self.rel_classifier(torch.cat((comparison_logits_a, comparison_logits_b), -1))
+
+        return torch.cat((logits_a_b, logits_rel), -1), self.compute_lm_loss(cls_a, lm_labels_a) + self.compute_lm_loss(cls_b, lm_labels_b)
+
+
 class BertForSingleTokenClassificationWithVanilla(BertPreTrainedModel):
     def __init__(self, config, num_labels):
         super(BertForSingleTokenClassificationWithVanilla, self).__init__(config)
@@ -1258,10 +1305,11 @@ class BertForSingleTokenClassificationWithVanilla(BertPreTrainedModel):
 
         self.comparison_classifier = nn.Linear(config.hidden_size, 1)
         self.label_classifier = nn.Linear(config.hidden_size, self.num_labels)
+
         self.label_classifier_vanilla = nn.Linear(config.hidden_size, self.num_labels)
-        self.selection_classifier = nn.Linear(config.hidden_size, 1)
-        self.label_classifier_concat = nn.Linear(config.hidden_size * 2, self.num_labels)
-        # self.decide_classifier = nn.Linear(self.num_labels * 2, self.num_labels)
+
+        # self.label_shift_classifier = nn.Linear(self.num_labels, self.num_labels)
+        # self.label_shift_classifier.weight.data.copy_(torch.eye(self.num_labels))
 
         self.rel_classifier = nn.Linear(2, 2)
 
@@ -1271,23 +1319,17 @@ class BertForSingleTokenClassificationWithVanilla(BertPreTrainedModel):
         pooled_output = self.dropout(target_all_output)
 
         logits = self.label_classifier(pooled_output)
-        final_logits = logits
+        # final_logits = self.label_shift_classifier(logits)
 
-        # seq_output_vanilla, _ = self.bert_vanilla(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False)
-        # target_all_output_vanilla = seq_output_vanilla.gather(1, target_ids.view(-1, 1).unsqueeze(2).repeat(1, 1, seq_output.size(2)))
-        # pooled_output_vanilla = self.dropout(target_all_output_vanilla)
-        # # logits_vanilla = self.label_classifier_vanilla(pooled_output_vanilla)
-        #
+        seq_output_vanilla, _ = self.bert_vanilla(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False)
+        target_all_output = seq_output_vanilla.gather(1, target_ids.view(-1, 1).unsqueeze(2).repeat(1, 1, seq_output.size(2)))
+        pooled_output_vanilla = self.dropout(target_all_output)
+        logits_vanilla = self.label_classifier(pooled_output_vanilla)
+
+        final_logits = logits + logits_vanilla
+        # final_logits = logits
+
         comparison_logits = self.comparison_classifier(pooled_output)
-        #
-        # final_logits = self.label_classifier_concat(torch.cat((pooled_output, pooled_output_vanilla), -1))
-        # # final_logits = logits_vanilla
-        # # final_logits = logits
-        # # final_logits = self.decide_classifier(nn.functional.relu(torch.cat((logits, logits_vanilla), -1)))
-
-        # selection_weight = self.selection_classifier(target_all_output_vanilla)
-        # selection_weight = (torch.tanh(selection_weight) + 1) / 2
-        # final_logits = selection_weight * logits_vanilla + (1. - selection_weight) * logits
 
         return final_logits, comparison_logits
 

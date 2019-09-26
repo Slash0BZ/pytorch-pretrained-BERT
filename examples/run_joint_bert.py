@@ -36,7 +36,7 @@ from tqdm import tqdm, trange
 from torch.nn import CrossEntropyLoss
 
 from pytorch_pretrained_bert.file_utils import PYTORCH_PRETRAINED_BERT_CACHE
-from pytorch_pretrained_bert.modeling import BertForSingleTokenClassification, BertForSingleTokenClassificationFollowTemporal, BertConfig, WEIGHTS_NAME, CONFIG_NAME, BertForSingleTokenClassificationWithPooler
+from pytorch_pretrained_bert.modeling import BertForSingleTokenClassification, BertForSingleTokenClassificationFollowTemporal, TemporalModelJoint, BertConfig, WEIGHTS_NAME, CONFIG_NAME, BertForSingleTokenClassificationWithPooler
 from pytorch_pretrained_bert.tokenization import BertTokenizer, BasicTokenizer
 from pytorch_pretrained_bert.optimization import BertAdam, warmup_linear
 
@@ -150,6 +150,18 @@ class TemporalVerbProcessor(DataProcessor):
             "centuries",
         ]
 
+    def get_typical_labels(self):
+        return [
+            # time of the dar
+            "dawn", "morning", "noon", "afternoon", "evening", "dusk", "night", "midnight",
+            # time of the week
+            "monday", "tuesday", "wednesday", 'thursday', "friday", "saturday", "sunday",
+            # time of the year
+            "january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december",
+            # time of the year
+            "spring", "summer", "autumn", "winter",
+        ]
+
     def plural_units(self, u):
         m = {
             "second": "seconds",
@@ -208,19 +220,15 @@ class TemporalVerbProcessor(DataProcessor):
                 target_idx_b = int(groups[4])
                 label_b = groups[5]
                 rel_label = groups[6]
-                if len(text_a.split()) > 120 or len(text_b.split()) > 120:
+                if len(text_a.split()) > 128 or len(text_b.split()) > 128:
                     continue
 
-                if label_a != "NONE":
+                if label_a != "NONE" and groups[-1] in ["DUR", "FREQ"]:
                     label_a_num = float(label_a.split()[0])
-                    if label_a_num < 1.0:
-                        continue
                     label_a, _ = self.normalize_timex(label_a_num, label_a.split()[1].lower())
 
-                if label_b != "NONE":
+                if label_b != "NONE" and groups[-1] in ["DUR", "FREQ"]:
                     label_b_num = float(label_b.split()[0])
-                    if label_b_num < 1.0:
-                        continue
                     label_b, _ = self.normalize_timex(label_b_num, label_b.split()[1].lower())
 
                 examples.append(
@@ -268,7 +276,7 @@ def randomize_tokens(tokens, tokenizer):
     return tokens, output_label
 
 
-def convert_single_pair(text, target_idx, label, tokenizer, max_seq_length, label_map):
+def convert_single_pair(text, target_idx, label, tokenizer, max_seq_length, label_map, typical_label_map, inst_type):
     tokens = text.lower().split()
     """
     MASKING TOKENS FOR LM LOSSES
@@ -291,22 +299,71 @@ def convert_single_pair(text, target_idx, label, tokenizer, max_seq_length, labe
     assert len(input_mask) == max_seq_length
     assert len(segment_ids) == max_seq_length
 
-    if label == "NONE":
-        label_id = -1
+    if inst_type in ["FREQ", "DUR"]:
+        if label == "NONE":
+            label_id = -1
+            soft_labels = None
+        else:
+            label_id = label_map[label]
+            label_size = len(label_map)
+            soft_labels = [0.0] * label_size
+            label_vector = [0.383, 0.242, 0.06, 0.006, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+            for i in range(label_id, len(soft_labels)):
+                soft_labels[i] = label_vector[i - label_id]
+            for i in range(label_id - 1, -1, -1):
+                soft_labels[i] = label_vector[label_id - i]
+    elif inst_type in ["TYPICAL"]:
+        label_id = typical_label_map[label]
+        label_vector = [0.383, 0.242, 0.06, 0.006, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        soft_labels = [0.0] * len(typical_label_map)
+        if 0 <= label_id <= 7:
+            for i in range(label_id, len(soft_labels)):
+                if i > 7:
+                    break
+                soft_labels[i] = label_vector[i - label_id]
+            for i in range(label_id - 1, -1, -1):
+                if i < 0:
+                    break
+                soft_labels[i] = label_vector[label_id - i]
+        if 8 <= label_id <= 14:
+            for i in range(label_id, len(soft_labels)):
+                if i > 14:
+                    break
+                soft_labels[i] = label_vector[i - label_id]
+            for i in range(label_id - 1, -1, -1):
+                if i < 8:
+                    break
+                soft_labels[i] = label_vector[label_id - i]
+        if 15 <= label_id <= 26:
+            for i in range(label_id, len(soft_labels)):
+                if i > 26:
+                    break
+                soft_labels[i] = label_vector[i - label_id]
+            for i in range(label_id - 1, -1, -1):
+                if i < 15:
+                    break
+                soft_labels[i] = label_vector[label_id - i]
+        if 27 <= label_id <= 30:
+            for i in range(label_id, len(soft_labels)):
+                if i > 30:
+                    break
+                soft_labels[i] = label_vector[i - label_id]
+            for i in range(label_id - 1, -1, -1):
+                if i < 27:
+                    break
+                soft_labels[i] = label_vector[label_id - i]
     else:
-        label_id = label_map[label]
+        label_id = -1
+        soft_labels = None
 
-    label_size = len(label_map)
-    soft_labels = [0.0] * label_size
-    # soft_labels[label_id] = 1.0
-    label_vector = [0.383, 0.242, 0.06, 0.006, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-    if label_id != -1:
-        for i in range(label_id, len(soft_labels)):
-            soft_labels[i] = label_vector[i - label_id]
-        for i in range(label_id - 1, -1, -1):
-            soft_labels[i] = label_vector[label_id - i]
+    if inst_type == "FREQ":
+        soft_labels = soft_labels + [0.0] * len(label_map) + [0.0] * len(typical_label_map)
+    if inst_type == "DUR":
+        soft_labels = [0.0] * len(label_map) + soft_labels + [0.0] * len(typical_label_map)
+    if inst_type == "TYPICAL":
+        soft_labels = [0.0] * len(label_map) + [0.0] * len(label_map) + soft_labels
 
-    weight_map = {
+    weight_map_duration = {
         0: 11.66,
         1: 2.04,
         2: 2.08,
@@ -317,18 +374,20 @@ def convert_single_pair(text, target_idx, label, tokenizer, max_seq_length, labe
         7: 0.35,
         8: 2.74
     }
+
     adjustment = 1.0
-    if label_id > -1:
-        adjustment = weight_map[label_id]
+    if inst_type == "DUR":
+        if label_id > -1:
+            adjustment = weight_map_duration[label_id]
 
     return input_ids, input_mask, segment_ids, label_id, target_idx + 1, adjustment, soft_labels, masking_labels
 
 
-def convert_examples_to_features(examples, label_list, max_seq_length,
-                                 tokenizer, output_mode):
+def convert_examples_to_features(examples, label_list, typical_label_list, max_seq_length, tokenizer):
     """Loads a data file into a list of `InputBatch`s."""
 
     label_map = {label : i for i, label in enumerate(label_list)}
+    typical_label_map = {label: i for i, label in enumerate(typical_label_list)}
 
     features = []
     for (ex_index, example) in enumerate(examples):
@@ -336,34 +395,24 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
             logger.info("Writing example %d of %d" % (ex_index, len(examples)))
 
         input_ids_a, input_mask_a, segment_ids_a, label_id_a, target_idx_a, adjustment_a, soft_labels_a, lm_labels_a = convert_single_pair(
-            example.text_a, example.target_idx_a, example.label_a, tokenizer, max_seq_length, label_map
+            example.text_a, example.target_idx_a, example.label_a, tokenizer, max_seq_length, label_map, typical_label_map, example.inst_type
         )
 
         if example.text_b is not None:
             input_ids_b, input_mask_b, segment_ids_b, label_id_b, target_idx_b, adjustment_b, soft_labels_b, lm_labels_b = convert_single_pair(
-                example.text_b, example.target_idx_b, example.label_b, tokenizer, max_seq_length, label_map
+                example.text_b, example.target_idx_b, example.label_b, tokenizer, max_seq_length, label_map, typical_label_map, example.inst_type
             )
         else:
             print("ERROR!")
             input_ids_b, input_mask_b, segment_ids_b, label_id_b, target_idx_b, adjustment_b, soft_labels_b, lm_labels_b = [None] * len(label_list)
 
         rel_soft_labels = [0.0] * 2
-        """
-        Converting Labels
-        """
-        # if example.rel_label == "NONE":
-        #     if abs(label_id_a - label_id_b) > 1:
-        #         if label_id_a > label_id_b:
-        #             example.rel_label = "MORE"
-        #         else:
-        #             example.rel_label = "LESS"
-        """END"""
         if example.rel_label == "LESS":
             rel_soft_labels[0] = 1.0
         elif example.rel_label == "MORE":
             rel_soft_labels[1] = 1.0
 
-        if ex_index < 100:
+        if ex_index < 5:
             logger.info("*** Example ***")
             logger.info("tokens: %s" % " ".join(
                 [str(x) for x in example.text_a.split()]))
@@ -420,64 +469,19 @@ def compute_metrics(task_name, preds, labels, additional=None):
         raise KeyError(task_name)
 
 
-def weighted_mse_loss(logits, target):
-    target = target.view(-1, 1)
-    indices = torch.arange(0, logits.size(1)).repeat(logits.size(0), 1).cuda()
-    indices = indices - target
-    indices = torch.mul(indices, indices).float().requires_grad_()
-    loss = torch.mul(indices, torch.exp(logits))
-    loss[torch.isnan(loss)] = 0
-    loss = torch.sum(loss, dim=1)
-    loss = torch.mean(loss)
-    return loss
-
-
-def weighted_l1_loss(logits, target):
-    target = target.view(-1, 1)
-    logits = nn.functional.log_softmax(logits, -1)
-    indices = torch.arange(0, logits.size(1)).repeat(logits.size(0), 1).cuda()
-    indices = torch.abs(indices - target)
-    indices = torch.mul(indices, indices)
-    indices = indices.float().requires_grad_()
-    loss = torch.mul(indices, torch.exp(logits))
-    loss[torch.isnan(loss)] = 0
-    loss = torch.sum(loss, dim=1)
-    loss = torch.mean(loss)
-    return loss
-
-
-def weighted_l1_loss_pair(logits, target_a, target_b):
-    return weighted_l1_loss(logits.narrow(1, 0, 11), target_a) + weighted_l1_loss(logits.narrow(1, 11, 11), target_b)
-
-
-def soft_cross_entropy_loss(logits, cls_a, cls_b, soft_target_a, adjustment_a, lm_labels_a,
-                            soft_target_b, adjustment_b, lm_labels_b, rel_soft_targets, num_labels, lm_loss):
-    logits_a = logits.narrow(1, 0, num_labels)
-    logits_b = logits.narrow(1, num_labels, num_labels)
-    """ATTEND TO DIM"""
-    logits_rel = logits.narrow(1, 2 * num_labels, 2)
-
-    loss_a = -soft_target_a * nn.functional.log_softmax(logits_a, -1)
+def soft_cross_entropy_loss(logits_a, logits_b, soft_target_a, soft_target_b, adjustment_a, adjustment_b, lm_loss):
+    loss_a = -soft_target_a * torch.log(logits_a)
     loss_a = torch.sum(loss_a, -1) * adjustment_a
 
-    loss_b = -soft_target_b * nn.functional.log_softmax(logits_b, -1)
+    loss_b = -soft_target_b * torch.log(logits_b)
     loss_b = torch.sum(loss_b, -1) * adjustment_b
 
-    loss_rel = -rel_soft_targets * nn.functional.log_softmax(logits_rel, -1)
-    loss_rel = torch.sum(loss_rel, -1)
-    mean_loss = loss_a.mean() + loss_b.mean() + loss_rel.mean()
+    mean_loss = loss_a.mean() + loss_b.mean()
 
-    # lm_loss_fn = CrossEntropyLoss(ignore_index=-1)
-    # lm_loss = lm_loss_fn(cls_a.view(-1, 30522), lm_labels_a.view(-1)) + lm_loss_fn(cls_b.view(-1, 30522), lm_labels_b.view(-1))
-
-    """CHANGE!!"""
-    return mean_loss + lm_loss, (loss_a.mean() + loss_b.mean()).item(), loss_rel.mean().item()
-
-
-def cross_entropy_loss(loss, logits, rel_soft_targets):
-    logits = logits.narrow(1, 14, 2)
-    labels = (rel_soft_targets != 0.0).nonzero().narrow(1, 1, 1).squeeze()
-    return loss(logits, labels)
+    if lm_loss is not None:
+        return mean_loss + lm_loss, mean_loss.item()
+    else:
+        return mean_loss, mean_loss.item()
 
 
 def main():
@@ -628,7 +632,9 @@ def main():
     output_mode = output_modes[task_name]
 
     label_list = processor.get_labels()
+    typical_label_list = processor.get_typical_labels()
     num_labels = len(label_list)
+    num_typical_labels = len(typical_label_list)
 
     tokenizer = BertTokenizer.from_pretrained(args.bert_model, do_lower_case=args.do_lower_case)
     # tokenizer = BasicTokenizer()
@@ -644,22 +650,17 @@ def main():
 
     # Prepare model
     cache_dir = args.cache_dir if args.cache_dir else os.path.join(str(PYTORCH_PRETRAINED_BERT_CACHE), 'distributed_{}'.format(args.local_rank))
-    model = BertForSingleTokenClassificationWithPooler.from_pretrained(args.bert_model,
+    model = TemporalModelJoint.from_pretrained(args.bert_model,
               cache_dir=cache_dir,
-              num_labels=num_labels)
-    # model.bert.embeddings.requires_grad = False
-    # model.bert.encoder.requires_grad = False
-    # model.bert.requires_grad = False
-    # model.all_attention.requires_grad = False
-    # for p in model.bert_temporal.parameters():
-    #     p.requires_grad = False
+              num_labels=num_labels,
+              num_typical_labels=num_typical_labels)
     # for p in model.bert.parameters():
     #     p.requires_grad = False
-    # for p in model.pi_classifier.parameters():
+    # for p in model.dur_classifier.parameters():
     #     p.requires_grad = False
-    # for p in model.mu_classifier.parameters():
+    # for p in model.freq_classifier.parameters():
     #     p.requires_grad = False
-    # for p in model.sigma_classifier.parameters():
+    # for p in model.typical_classifier.parameters():
     #     p.requires_grad = False
 
     if args.fp16:
@@ -710,7 +711,7 @@ def main():
     tr_loss = 0
     if args.do_train:
         train_features = convert_examples_to_features(
-            train_examples, label_list, args.max_seq_length, tokenizer, output_mode)
+            train_examples, label_list, typical_label_list, args.max_seq_length, tokenizer)
         logger.info("***** Running training *****")
         logger.info("  Num examples = %d", len(train_examples))
         logger.info("  Batch size = %d", args.train_batch_size)
@@ -776,27 +777,18 @@ def main():
                 label_ids_a, label_ids_b, lm_labels_a, lm_labels_b = batch
 
                 # define a new function to compute loss values for both output_modes
-                logits, lm_loss = model(
+                logits_a, logits_b, lm_loss = model(
                     input_ids_a, segment_ids_a, input_mask_a, target_ids_a,
                     input_ids_b, segment_ids_b, input_mask_b, target_ids_b,
                     lm_labels_a, lm_labels_b
                 )
-                # loss = lm_loss
 
-                loss, label_loss, rel_loss = soft_cross_entropy_loss(
-                    logits.view(-1, num_labels * 2 + 2), None, None,
-                    soft_targets_a, adjustments_a, None,
-                    soft_targets_b, adjustments_b, None,
-                    rel_labels, len(label_list), lm_loss
+                loss, non_lm_loss = soft_cross_entropy_loss(
+                    logits_a.view(-1, num_labels * 2 + num_typical_labels), logits_b.view(-1, num_labels * 2 + num_typical_labels),
+                    soft_targets_a, soft_targets_b,
+                    adjustments_a, adjustments_b,
+                    lm_loss
                 )
-
-                # loss = weighted_l1_loss_pair(
-                #     logits.view(-1, num_labels * 2 + 2), label_ids_a, label_ids_b
-                # )
-
-                # loss = cross_entropy_loss(
-                #     nn.CrossEntropyLoss(), logits.view(-1, num_labels * 2 + 2), rel_labels
-                # )
 
                 if n_gpu > 1:
                     loss = loss.mean() # mean() to average on multi-gpu.
@@ -813,17 +805,10 @@ def main():
 
                 tr_loss += loss.item()
                 middle_loss += loss.item()
-                middle_label_loss += label_loss
-                middle_rel_loss += rel_loss
+                middle_label_loss += non_lm_loss
                 epoch_loss += loss.item()
-                epoch_label_loss += label_loss
-                epoch_rel_loss += rel_loss
+                epoch_label_loss += non_lm_loss
 
-                """
-                Release losses
-                """
-                # if step % 1 == 0:
-                #     print(model.bert_temporal.encoder.layer[0].intermediate.dense.weight)
                 if step % 100 == 0:
                     f_loss.write(("Total Loss: " + str(middle_loss)) + "\n")
                     f_loss.write(("Label Loss: " + str(middle_label_loss)) + "\n")
@@ -868,68 +853,16 @@ def main():
 
         # Load a trained model and config that you have fine-tuned
         config = BertConfig(output_config_file)
-        model = BertForSingleTokenClassificationWithPooler(config, num_labels=num_labels)
+        model = TemporalModelJoint(config, num_labels=num_labels, num_typical_labels=num_typical_labels)
         model.load_state_dict(torch.load(output_model_file))
     else:
-        model = BertForSingleTokenClassificationWithPooler.from_pretrained(args.bert_model, num_labels=num_labels)
+        model = TemporalModelJoint.from_pretrained(args.bert_model, num_labels=num_labels, num_typical_labels=num_typical_labels)
     model.to(device)
 
-    # if args.do_eval and (args.local_rank == -1 or torch.distributed.get_rank() == 0):
-    #     eval_examples = processor.get_dev_examples(args.data_dir)
-    #     eval_features = convert_examples_to_features(
-    #         eval_examples, label_list, args.max_seq_length, tokenizer, output_mode)
-    #     logger.info("***** Running evaluation *****")
-    #     logger.info("  Num examples = %d", len(eval_examples))
-    #     logger.info("  Batch size = %d", args.eval_batch_size)
-    #     all_input_ids = torch.tensor([f.input_ids_a for f in eval_features], dtype=torch.long)
-    #     all_input_mask = torch.tensor([f.input_mask_a for f in eval_features], dtype=torch.long)
-    #     all_segment_ids = torch.tensor([f.segment_ids_a for f in eval_features], dtype=torch.long)
-    #     all_target_idxs = torch.tensor([f.target_idx_a for f in eval_features], dtype=torch.long)
-    #
-    #     eval_data = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_target_idxs)
-    #     # Run prediction for full data
-    #     eval_sampler = SequentialSampler(eval_data)
-    #     eval_dataloader = DataLoader(eval_data, sampler=eval_sampler, batch_size=args.eval_batch_size)
-    #
-    #     model.eval()
-    #     eval_loss = 0
-    #     nb_eval_steps = 0
-    #     preds = []
-    #
-    #     f_out = open("./bert_logits.txt", "w")
-    #     for input_ids, input_mask, segment_ids, target_idxs in tqdm(eval_dataloader, desc="Evaluating"):
-    #         input_ids = input_ids.to(device)
-    #         input_mask = input_mask.to(device)
-    #         segment_ids = segment_ids.to(device)
-    #         target_idxs = target_idxs.to(device)
-    #
-    #         with torch.no_grad():
-    #             logits = model.get_single_inference(input_ids, segment_ids, input_mask, target_idxs)
-    #
-    #         w_ready_logits = logits.detach().cpu().numpy()
-    #         for l in w_ready_logits:
-    #             ll = l[0]
-    #             s = ""
-    #             for lll in ll:
-    #                 s += str(lll) + "\t"
-    #             f_out.write(s + "\n")
-    #         nb_eval_steps += 1
-    #         if len(preds) == 0:
-    #             preds.append(logits.detach().cpu().numpy())
-    #         else:
-    #             preds[0] = np.append(
-    #                 preds[0], logits.detach().cpu().numpy(), axis=0)
-    #
-    #     eval_loss = eval_loss / nb_eval_steps
-    #     loss = tr_loss/nb_tr_steps if args.do_train else None
-
-    """
-    For pair evaluation
-    """
     if args.do_eval and (args.local_rank == -1 or torch.distributed.get_rank() == 0):
         eval_examples = processor.get_dev_examples(args.data_dir)
         eval_features = convert_examples_to_features(
-            eval_examples, label_list, args.max_seq_length, tokenizer, output_mode)
+            eval_examples, label_list, typical_label_list, args.max_seq_length, tokenizer)
         logger.info("***** Running evaluation *****")
         logger.info("  Num examples = %d", len(eval_examples))
         logger.info("  Batch size = %d", args.eval_batch_size)
@@ -973,14 +906,16 @@ def main():
             input_ids_b, input_mask_b, segment_ids_b, target_ids_b, soft_targets_b, adjustments_b, rel_labels = batch
 
             with torch.no_grad():
-                logits, _ = model(
+                logits_a, logits_b, _ = model(
                     input_ids_a, segment_ids_a, input_mask_a, target_ids_a,
                     input_ids_b, segment_ids_b, input_mask_b, target_ids_b, None, None
                 )
+                logits = torch.cat((logits_a, logits_b), -1)
 
             w_ready_logits = logits.detach().cpu().numpy()
             for l in w_ready_logits:
-                ll = l[0]
+                # ll = l[0]
+                ll = l
                 s = ""
                 for lll in ll:
                     s += str(lll) + "\t"

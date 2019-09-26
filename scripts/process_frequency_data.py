@@ -70,7 +70,7 @@ class AllenSRL:
         f_out = jsonlines.open(self.output_path, "w")
         counter = 0
         start_time = time.time()
-        batch_size = 128
+        batch_size = 192
         for i in range(0, len(sentences), batch_size):
             input_map = []
             for j in range(0, batch_size):
@@ -250,8 +250,8 @@ class SecondProcessor:
             f_out.write(" ".join(cur[0]) + "\t" + str(cur[1]) + "\t" + cur[2] + "\t" + " ".join(unique_list[i+1][0]) + "\t" + str(unique_list[i+1][1]) + "\t" + unique_list[i+1][2] + "\tFREQ\n")
 
 
-# srl = AllenSRL("samples/typical/afp_eng_raw_srl_2.jsonl")
-# srl.predict_file("samples/typical/afp_eng_raw.txt")
+srl = AllenSRL("samples/typical/all_eng_srl.jsonl")
+srl.predict_file("samples/typical/all_raw.txt")
 # second_processor = SecondProcessor()
 # second_processor.save_to_file("samples/pretrain_combine/freq.srl.pair.all.txt")
 
@@ -264,4 +264,4 @@ def insert_duration_data(limit, output_file):
         f_out.write("\t".join(line.split("\t")[:-1]) + "\tDUR\n")
 
 
-insert_duration_data(15937, "samples/pretrain_combine/dur.srl.pair.all.txt")
+# insert_duration_data(15937, "samples/pretrain_combine/dur.srl.pair.all.txt")

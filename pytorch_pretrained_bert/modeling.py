@@ -27,6 +27,7 @@ import tarfile
 import tempfile
 import sys
 import numpy as np
+import satnet
 from io import open
 
 import torch
@@ -626,40 +627,40 @@ class BertPreTrainedModel(nn.Module):
             state_dict[new_key] = state_dict.pop(old_key)
 
         """ Load vanilla BERT weights """
-        vanilla_archive_file = PRETRAINED_MODEL_ARCHIVE_MAP["bert-base-uncased"]
-        resolved_vanilla_file = cached_path(vanilla_archive_file, cache_dir=cache_dir)
-        tempdir = tempfile.mkdtemp()
-        logger.info("extracting archive file {} to temp dir {}".format(
-            resolved_vanilla_file, tempdir))
-        with tarfile.open(resolved_vanilla_file, 'r:gz') as archive:
-            archive.extractall(tempdir)
-        vanilla_weights_path = os.path.join(tempdir, WEIGHTS_NAME)
-        vanilla_state_dict = torch.load(vanilla_weights_path, map_location='cpu' if not torch.cuda.is_available() else None)
-
-        old_keys = []
-        new_keys = []
-        for key in vanilla_state_dict.keys():
-            new_key = None
-            if 'gamma' in key:
-                new_key = key.replace('gamma', 'weight')
-            if 'beta' in key:
-                new_key = key.replace('beta', 'bias')
-            if new_key:
-                old_keys.append(key)
-                new_keys.append(new_key)
-        for old_key, new_key in zip(old_keys, new_keys):
-            vanilla_state_dict[new_key] = vanilla_state_dict.pop(old_key)
-
-        old_keys = []
-        new_keys = []
-        for key in state_dict.keys():
-            if key.startswith("bert"):
-                lookup = key.replace("bert", "bert_vanilla")
-                old_keys.append(key)
-                new_keys.append(lookup)
-        for o, n in zip(old_keys, new_keys):
-            state_dict[n] = copy.deepcopy(vanilla_state_dict[o])
-        del vanilla_state_dict
+        # vanilla_archive_file = PRETRAINED_MODEL_ARCHIVE_MAP["bert-base-uncased"]
+        # resolved_vanilla_file = cached_path(vanilla_archive_file, cache_dir=cache_dir)
+        # tempdir = tempfile.mkdtemp()
+        # logger.info("extracting archive file {} to temp dir {}".format(
+        #     resolved_vanilla_file, tempdir))
+        # with tarfile.open(resolved_vanilla_file, 'r:gz') as archive:
+        #     archive.extractall(tempdir)
+        # vanilla_weights_path = os.path.join(tempdir, WEIGHTS_NAME)
+        # vanilla_state_dict = torch.load(vanilla_weights_path, map_location='cpu' if not torch.cuda.is_available() else None)
+        #
+        # old_keys = []
+        # new_keys = []
+        # for key in vanilla_state_dict.keys():
+        #     new_key = None
+        #     if 'gamma' in key:
+        #         new_key = key.replace('gamma', 'weight')
+        #     if 'beta' in key:
+        #         new_key = key.replace('beta', 'bias')
+        #     if new_key:
+        #         old_keys.append(key)
+        #         new_keys.append(new_key)
+        # for old_key, new_key in zip(old_keys, new_keys):
+        #     vanilla_state_dict[new_key] = vanilla_state_dict.pop(old_key)
+        #
+        # old_keys = []
+        # new_keys = []
+        # for key in state_dict.keys():
+        #     if key.startswith("bert"):
+        #         lookup = key.replace("bert", "bert_vanilla")
+        #         old_keys.append(key)
+        #         new_keys.append(lookup)
+        # for o, n in zip(old_keys, new_keys):
+        #     state_dict[n] = copy.deepcopy(vanilla_state_dict[o])
+        # del vanilla_state_dict
         """
         LOAD VANILLA WEIGHTS END
         """
@@ -1244,6 +1245,73 @@ class BertForSingleTokenClassification(BertPreTrainedModel):
         # return torch.cat((logits_a_b, logits_rel), 2), self.compute_lm_loss(cls_a, lm_labels_a) + self.compute_lm_loss(cls_b, lm_labels_b)
         return torch.cat((logits_a_b, logits_rel), 2), None
         # return logits_a_b, None
+
+
+class TemporalModelJoint(BertPreTrainedModel):
+    def __init__(self, config, num_labels, num_typical_labels):
+        super(TemporalModelJoint, self).__init__(config)
+        self.num_labels = num_labels
+        self.num_typical_labels = num_typical_labels
+        self.bert = BertModel(config)
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+        self.log_softmax = nn.LogSoftmax(-1)
+        self.softmax = nn.Softmax(-1)
+
+        self.dur_classifier = nn.Linear(config.hidden_size, self.num_labels)
+        self.freq_classifier = nn.Linear(config.hidden_size, self.num_labels)
+        self.typical_classifier = nn.Linear(config.hidden_size, self.num_typical_labels)
+
+        self.concat_size = self.num_labels * 2 + self.num_typical_labels
+
+        # self.sat = satnet.SATNet(48, 100, 100).cuda()
+        # self.dur_additional_bits = torch.zeros([1, 9]).float().cuda()
+        # self.dur_is_input_mask = torch.cat((torch.ones(1, 9), torch.zeros([1, 9]), torch.ones([1, 21])), -1).int().cuda()
+        # self.dur_is_input_mask = torch.cat((torch.zeros([1, 9]), torch.ones([1, 39])), -1).int().cuda()
+        # self.dur_is_input_mask = self.dur_is_input_mask.view(self.dur_is_input_mask.size(0), -1)
+
+        self.cls = BertOnlyMLMHead(config, self.bert.embeddings.word_embeddings.weight)
+        self.apply(self.init_bert_weights)
+
+        self.lm_loss_fn = CrossEntropyLoss(ignore_index=-1)
+
+    def get_single_inference(self, input_ids, token_type_ids, attention_mask, target_ids):
+        seq_output, _ = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False)
+        target_all_output = seq_output.gather(1, target_ids.view(-1, 1).unsqueeze(2).repeat(1, 1, seq_output.size(2)))
+
+        pooled_output = self.dropout(target_all_output)
+
+        dur_logits = self.softmax(self.dur_classifier(pooled_output)).view(-1, self.num_labels)
+        freq_logits = self.softmax(self.freq_classifier(pooled_output)).view(-1, self.num_labels)
+        typical_logits = self.softmax(self.typical_classifier(pooled_output)).view(-1, self.num_typical_labels)
+
+        # concat_logits = torch.cat((self.dur_additional_bits.repeat(dur_logits.size(0), 1), freq_logits, dur_logits, typical_logits), -1)
+        # concat_logits = torch.cat((dur_logits, freq_logits, dur_logits, typical_logits), -1)
+        # cur_dur_mask = self.dur_is_input_mask.repeat(dur_logits.size(0), 1)
+        # dur_logits = self.sat(concat_logits, cur_dur_mask)
+        # dur_logits = self.softmax(dur_logits.narrow(1, 0, 9))
+
+        cls_logits = self.cls(seq_output)
+
+        return freq_logits, dur_logits, typical_logits, cls_logits
+
+    def compute_lm_loss(self, cls_output, labels):
+        if labels is None:
+            return None
+        lm_loss = self.lm_loss_fn(cls_output.view(-1, 30522), labels.view(-1))
+        return lm_loss
+
+    def forward(self, input_ids_a, token_type_ids_a, attention_mask_a, target_ids_a,
+                input_ids_b, token_type_ids_b, attention_mask_b, target_ids_b, lm_labels_a, lm_labels_b):
+        freq_a, dur_a, typ_a, cls_a = self.get_single_inference(input_ids_a, token_type_ids_a, attention_mask_a, target_ids_a)
+        freq_b, dur_b, typ_b, cls_b = self.get_single_inference(input_ids_b, token_type_ids_b, attention_mask_b, target_ids_b)
+
+        lm_loss_a = None
+        lm_loss_a = self.compute_lm_loss(cls_a, lm_labels_a)
+        lm_loss_b = self.compute_lm_loss(cls_b, lm_labels_b)
+        if lm_loss_a is not None:
+            return torch.cat((freq_a, dur_a, typ_a), -1), torch.cat((freq_b, dur_b, typ_b), -1), lm_loss_a + lm_loss_b
+        else:
+            return torch.cat((freq_a, dur_a, typ_a), -1), torch.cat((freq_b, dur_b, typ_b), -1), None
 
 
 class BertForSingleTokenClassificationWithPooler(BertPreTrainedModel):

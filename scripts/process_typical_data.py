@@ -1,3 +1,4 @@
+import jsonlines
 from ccg_nlpy import local_pipeline
 import re
 import os
@@ -84,12 +85,13 @@ class GigawordExtractor:
 
     def check_patterns_keyword(self, tokens):
         key_words = [
-            "morning",
-            "afternoon",
-            "night",
-            "evening",
-            "noon",
+            # time of the dar
+            "dawn", "morning", "noon", "afternoon", "evening", "dusk", "night", "midnight",
+            # time of the week
+            "monday", "tuesday", "wednesday", 'thursday', "friday", "saturday", "sunday",
+            # time of the year
             "january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december",
+            # time of the year
             "spring", "summer", "autumn", "winter",
         ]
         for t in tokens:
@@ -139,5 +141,112 @@ class GigawordExtractor:
                             print(e)
 
 
+class SecondFilter:
+
+    def __init__(self):
+        self.source = "samples/typical/all_eng_srl.jsonl"
+        self.ret = []
+        self.process()
+
+    def get_tmp_range(self, tags):
+        start = -1
+        end = -1
+        for i, t in enumerate(tags):
+            if t == "B-ARGM-TMP":
+                start = i
+                end = i + 1
+            if t == "I-ARGM-TMP":
+                end += 1
+        return start, end
+
+    def check_patterns_keyword(self, tokens):
+        key_words_day = [
+            # time of the day
+            "dawn", "morning", "noon", "afternoon", "evening", "dusk", "night", "midnight",
+        ]
+        key_words_week = [
+            # time of the week
+            "monday", "tuesday", "wednesday", 'thursday', "friday", "saturday", "sunday",
+        ]
+        key_words_month = [
+            # time of the year
+            "january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december",
+        ]
+        key_words_season = [
+            # time of the year
+            "spring", "summer", "autumn", "winter",
+        ]
+        for t in tokens:
+            if t.lower() in key_words_day:
+                return t.lower(), "TYP_DAY"
+            if t.lower() in key_words_week:
+                return t.lower(), "TYP_WK"
+            if t.lower() in key_words_month:
+                return t.lower(), "TYP_MON"
+            if t.lower() in key_words_season:
+                return t.lower(), "TYP_SEA"
+        return None
+
+    def get_stripped(self, tokens, tags, orig_verb_pos):
+        new_tokens = []
+        new_verb_pos = -1
+        for i in range(0, len(tokens)):
+            if tags[i] != "O" and "ARGM-TMP" not in tags[i]:
+                new_tokens.append(tokens[i])
+            if i == orig_verb_pos:
+                new_verb_pos = len(new_tokens) - 1
+        return new_tokens, new_verb_pos
+
+    def get_verb_position(self, tags):
+        for i, t in enumerate(tags):
+            if t == "B-V":
+                return i
+        return -1
+
+    def process(self):
+        lines = [x.strip() for x in open(self.source).readlines()]
+        reader = jsonlines.Reader(lines)
+        label_map = {}
+        for obj_list in reader:
+            for obj in obj_list:
+                verb_obj_select = None
+                label = ""
+                t = ""
+                for verb in obj['verbs']:
+                    argtmp_start, argtmp_end = self.get_tmp_range(verb['tags'])
+                    tmp_tokens = obj['words'][argtmp_start:argtmp_end]
+                    if self.check_patterns_keyword(tmp_tokens) is not None:
+                        label, t = self.check_patterns_keyword(tmp_tokens)
+                        verb_obj_select = verb
+                        break
+                if verb_obj_select is not None:
+                    stripped_tokens, verb_pos = self.get_stripped(obj['words'], verb_obj_select['tags'], self.get_verb_position(verb_obj_select['tags']))
+                    self.ret.append([stripped_tokens, verb_pos, label, t])
+                    if label not in label_map:
+                        label_map[label] = 0
+                    label_map[label] += 1
+        print(label_map)
+
+    def save_to_file(self, output_file):
+        import random
+        seen = set()
+        unique_list = []
+        for g in self.ret:
+            key = " ".join(g[0]) + str(g[1]) + g[2]
+            if key not in seen:
+                unique_list.append(g)
+            seen.add(key)
+
+        random.shuffle(unique_list)
+        f_out = open(output_file, "w")
+        for i in range(0, len(unique_list) - 1, 2):
+            cur = unique_list[i]
+            f_out.write(" ".join(cur[0]) + "\t" + str(cur[1]) + "\t" + cur[2] + "\t" + " ".join(unique_list[i+1][0]) + "\t" + str(unique_list[i+1][1]) + "\t" + unique_list[i+1][2] + "\tTYPICAL\n")
+
+
 # extractor = GigawordExtractor()
-# extractor.process_path("/home/xyzhou/Documents/gigaword/afp_eng", "samples/typical/afp_eng_raw.txt")
+# extractor.process_path("/Volumes/SSD/gigaword/data/all", "samples/typical/all_raw.txt")
+
+
+filter = SecondFilter()
+filter.save_to_file("samples/pretrain_combine/typical.pair.all.txt")

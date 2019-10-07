@@ -220,7 +220,7 @@ class TemporalVerbProcessor(DataProcessor):
                 target_idx_b = int(groups[4])
                 label_b = groups[5]
                 rel_label = groups[6]
-                if len(text_a.split()) > 128 or len(text_b.split()) > 128:
+                if len(text_a.split()) > 120 or len(text_b.split()) > 120:
                     continue
 
                 if label_a != "NONE" and groups[-1] in ["DUR", "FREQ"]:
@@ -276,6 +276,22 @@ def randomize_tokens(tokens, tokenizer):
     return tokens, output_label
 
 
+def assign_round_soft_label(length, target):
+    label_vector = [0.157, 0.001, 0.0]
+    label_vector_rev = [0.0, 0.001, 0.157]
+    ret_vec = [0.0] * length
+    ret_vec[target] = 0.683
+    for i in range(target + 1, target + 4):
+        cur_target = i
+        if i >= length:
+            cur_target -= length
+        ret_vec[cur_target] = label_vector[i - target - 1]
+    for i in range(target - 1, target - 4, -1):
+        cur_target = i
+        ret_vec[cur_target] = max(ret_vec[cur_target], label_vector_rev[i - target + 3])
+    return ret_vec
+
+
 def convert_single_pair(text, target_idx, label, tokenizer, max_seq_length, label_map, typical_label_map, inst_type):
     tokens = text.lower().split()
     """
@@ -314,44 +330,16 @@ def convert_single_pair(text, target_idx, label, tokenizer, max_seq_length, labe
                 soft_labels[i] = label_vector[label_id - i]
     elif inst_type in ["TYPICAL"]:
         label_id = typical_label_map[label]
-        label_vector = [0.383, 0.242, 0.06, 0.006, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-        soft_labels = [0.0] * len(typical_label_map)
-        if 0 <= label_id <= 7:
-            for i in range(label_id, len(soft_labels)):
-                if i > 7:
-                    break
-                soft_labels[i] = label_vector[i - label_id]
-            for i in range(label_id - 1, -1, -1):
-                if i < 0:
-                    break
-                soft_labels[i] = label_vector[label_id - i]
-        if 8 <= label_id <= 14:
-            for i in range(label_id, len(soft_labels)):
-                if i > 14:
-                    break
-                soft_labels[i] = label_vector[i - label_id]
-            for i in range(label_id - 1, -1, -1):
-                if i < 8:
-                    break
-                soft_labels[i] = label_vector[label_id - i]
-        if 15 <= label_id <= 26:
-            for i in range(label_id, len(soft_labels)):
-                if i > 26:
-                    break
-                soft_labels[i] = label_vector[i - label_id]
-            for i in range(label_id - 1, -1, -1):
-                if i < 15:
-                    break
-                soft_labels[i] = label_vector[label_id - i]
-        if 27 <= label_id <= 30:
-            for i in range(label_id, len(soft_labels)):
-                if i > 30:
-                    break
-                soft_labels[i] = label_vector[i - label_id]
-            for i in range(label_id - 1, -1, -1):
-                if i < 27:
-                    break
-                soft_labels[i] = label_vector[label_id - i]
+        # soft_labels = [0.0] * 31
+        # soft_labels[label_id] = 1.0
+        if 0 <= label_id < 8:
+            soft_labels = assign_round_soft_label(8, label_id) + [0.0] * 23
+        elif 8 <= label_id < 15:
+            soft_labels = [0.0] * 8 + assign_round_soft_label(7, label_id - 8) + [0.0] * 16
+        elif 15 <= label_id < 27:
+            soft_labels = [0.0] * 15 + assign_round_soft_label(12, label_id - 15) + [0.0] * 4
+        else:
+            soft_labels = [0.0] * 27 + assign_round_soft_label(4, label_id - 27)
     else:
         label_id = -1
         soft_labels = None
@@ -374,11 +362,18 @@ def convert_single_pair(text, target_idx, label, tokenizer, max_seq_length, labe
         7: 0.35,
         8: 2.74
     }
+    weight_map_typ = [
+        1.33, 0.47, 3.05, 0.66, 1.79, 26.68, 0.53, 1.24, 0.90, 0.87, 0.88, 0.88, 0.95, 1.42, 1.38, 1.03, 1.35, 0.90,
+        1.08, 0.94, 0.87, 0.91, 1.09, 0.93, 1.05, 1.03, 0.98, 1.32, 0.47, 2.06, 1.57
+    ]
 
     adjustment = 1.0
     if inst_type == "DUR":
         if label_id > -1:
             adjustment = weight_map_duration[label_id]
+    if inst_type == "TYPICAL":
+        if label_id > -1:
+            adjustment = weight_map_typ[label_id]
 
     return input_ids, input_mask, segment_ids, label_id, target_idx + 1, adjustment, soft_labels, masking_labels
 

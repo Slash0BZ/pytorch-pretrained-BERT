@@ -70,7 +70,7 @@ class AllenSRL:
         f_out = jsonlines.open(self.output_path, "w")
         counter = 0
         start_time = time.time()
-        batch_size = 192
+        batch_size = 256
         for i in range(0, len(sentences), batch_size):
             input_map = []
             for j in range(0, batch_size):
@@ -203,6 +203,32 @@ class SecondProcessor:
                 new_verb_pos = len(new_tokens) - 1
         return new_tokens, new_verb_pos
 
+    def get_stripped_tmp_only(self, tokens, tags, orig_verb_pos):
+        new_tokens = []
+        new_verb_pos = -1
+        for i in range(0, len(tokens)):
+            if "ARGM-TMP" not in tags[i]:
+                new_tokens.append(tokens[i])
+            else:
+                valid = True
+                for j in range(i, len(tokens)):
+                    if "ARGM-TMP" not in tags[j]:
+                        break
+                    if tokens[j].lower() in self.duration_keys:
+                        valid = False
+                        break
+                for j in range(i, -1, -1):
+                    if "ARGM-TMP" not in tags[j]:
+                        break
+                    if tokens[j].lower() in self.duration_keys:
+                        valid = False
+                        break
+                if valid:
+                    new_tokens.append(tokens[i])
+            if i == orig_verb_pos:
+                new_verb_pos = len(new_tokens) - 1
+        return new_tokens, new_verb_pos
+
     def get_verb_position(self, tags):
         for i, t in enumerate(tags):
             if t == "B-V":
@@ -227,7 +253,8 @@ class SecondProcessor:
                         unit = validation[1]
                         break
                 if verb_obj_select is not None:
-                    stripped_tokens, verb_pos = self.get_stripped(obj['words'], verb_obj_select['tags'], self.get_verb_position(verb_obj_select['tags']))
+                    # stripped_tokens, verb_pos = self.get_stripped(obj['words'], verb_obj_select['tags'], self.get_verb_position(verb_obj_select['tags']))
+                    stripped_tokens, verb_pos = self.get_stripped_tmp_only(obj['words'], verb_obj_select['tags'], self.get_verb_position(verb_obj_select['tags']))
                     self.ret.append([stripped_tokens, verb_pos, str(num) + " " + unit])
                     # print(" ".join(stripped_tokens) + "\t" + str(verb_pos))
                     # print(str(num) + " " + unit)
@@ -250,10 +277,10 @@ class SecondProcessor:
             f_out.write(" ".join(cur[0]) + "\t" + str(cur[1]) + "\t" + cur[2] + "\t" + " ".join(unique_list[i+1][0]) + "\t" + str(unique_list[i+1][1]) + "\t" + unique_list[i+1][2] + "\tFREQ\n")
 
 
-srl = AllenSRL("samples/typical/all_eng_srl.jsonl")
-srl.predict_file("samples/typical/all_raw.txt")
-# second_processor = SecondProcessor()
-# second_processor.save_to_file("samples/pretrain_combine/freq.srl.pair.all.txt")
+# srl = AllenSRL("samples/typical/all_eng_srl.jsonl")
+# srl.predict_file("samples/typical/all_raw.txt")
+second_processor = SecondProcessor()
+second_processor.save_to_file("samples/joint_fullsent/freq.srl.pair.all.txt")
 
 def insert_duration_data(limit, output_file):
     import random
@@ -264,4 +291,4 @@ def insert_duration_data(limit, output_file):
         f_out.write("\t".join(line.split("\t")[:-1]) + "\tDUR\n")
 
 
-# insert_duration_data(15937, "samples/pretrain_combine/dur.srl.pair.all.txt")
+# insert_duration_data(280000, "samples/pretrain_combine/dur.srl.pair.all.txt")

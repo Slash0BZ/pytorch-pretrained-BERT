@@ -27,7 +27,7 @@ import tarfile
 import tempfile
 import sys
 import numpy as np
-import satnet
+# import satnet
 from io import open
 
 import torch

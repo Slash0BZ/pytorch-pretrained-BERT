@@ -144,7 +144,10 @@ class GigawordExtractor:
 class SecondFilter:
 
     def __init__(self):
-        self.source = "samples/typical/all_eng_srl.jsonl"
+        self.source = [
+            "samples/typical/all_eng_srl.jsonl",
+            "samples/typical/all_eng_srl_2.jsonl",
+        ]
         self.ret = []
         self.process()
 
@@ -192,7 +195,34 @@ class SecondFilter:
         new_verb_pos = -1
         for i in range(0, len(tokens)):
             if tags[i] != "O" and "ARGM-TMP" not in tags[i]:
+                # if "ARGM-TMP" in tags[i]:
                 new_tokens.append(tokens[i])
+            if i == orig_verb_pos:
+                new_verb_pos = len(new_tokens) - 1
+        return new_tokens, new_verb_pos
+
+    def get_stripped_tmp_only(self, tokens, tags, orig_verb_pos, label):
+        new_tokens = []
+        new_verb_pos = -1
+        for i in range(0, len(tokens)):
+            if "ARGM-TMP" not in tags[i]:
+                new_tokens.append(tokens[i])
+            else:
+                valid = True
+                for j in range(i, len(tokens)):
+                    if "ARGM-TMP" not in tags[j]:
+                        break
+                    if tokens[j].lower() == label.lower():
+                        valid = False
+                        break
+                for j in range(i, -1, -1):
+                    if "ARGM-TMP" not in tags[j]:
+                        break
+                    if tokens[j].lower() == label.lower():
+                        valid = False
+                        break
+                if valid:
+                    new_tokens.append(tokens[i])
             if i == orig_verb_pos:
                 new_verb_pos = len(new_tokens) - 1
         return new_tokens, new_verb_pos
@@ -204,7 +234,9 @@ class SecondFilter:
         return -1
 
     def process(self):
-        lines = [x.strip() for x in open(self.source).readlines()]
+        lines = []
+        for s in self.source:
+            lines += [x.strip() for x in open(s).readlines()]
         reader = jsonlines.Reader(lines)
         label_map = {}
         for obj_list in reader:
@@ -220,7 +252,8 @@ class SecondFilter:
                         verb_obj_select = verb
                         break
                 if verb_obj_select is not None:
-                    stripped_tokens, verb_pos = self.get_stripped(obj['words'], verb_obj_select['tags'], self.get_verb_position(verb_obj_select['tags']))
+                    # stripped_tokens, verb_pos = self.get_stripped(obj['words'], verb_obj_select['tags'], self.get_verb_position(verb_obj_select['tags']))
+                    stripped_tokens, verb_pos = self.get_stripped_tmp_only(obj['words'], verb_obj_select['tags'], self.get_verb_position(verb_obj_select['tags']), label)
                     self.ret.append([stripped_tokens, verb_pos, label, t])
                     if label not in label_map:
                         label_map[label] = 0
@@ -249,4 +282,4 @@ class SecondFilter:
 
 
 filter = SecondFilter()
-filter.save_to_file("samples/pretrain_combine/typical.pair.all.txt")
+filter.save_to_file("samples/joint_fullsent/typical.srl.pair.all.txt")

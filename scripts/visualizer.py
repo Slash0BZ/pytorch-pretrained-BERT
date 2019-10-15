@@ -1,4 +1,5 @@
 import matplotlib.pyplot as plt
+import numpy as np
 
 
 class LossVisualizer:
@@ -25,6 +26,10 @@ class LossVisualizer:
         plt.plot(self.value_map[key][1:])
         plt.show()
 
+    def visual_diff(self, key_a, key_b):
+        plt.plot(np.array(self.value_map[key_a][1:]) - np.array(self.value_map[key_b][1:]))
+        plt.show()
+
 
 # visualizer = LossVisualizer("bert_classification_only/loss_log.txt")
 # visualizer = LossVisualizer("bert_classification_only_freeze/loss_log.txt")
@@ -40,4 +45,5 @@ visualizer = LossVisualizer("loss_log.txt")
 
 # visualizer = LossVisualizer("loss_log.txt")
 visualizer.visualize("Label Loss")
+visualizer.visual_diff("Total Loss", "Label Loss")
 

@@ -154,6 +154,6 @@ def convert_mctaco_data(path, out_path):
 
 
 
-convert_mctaco_data("samples/split_30_70_good/dev.txt", "samples/split_30_70_good_verb_srl/dev.txt")
-convert_mctaco_data("samples/split_30_70_good/test.txt", "samples/split_30_70_good_verb_srl/test.txt")
+# convert_mctaco_data("samples/split_30_70_good/dev.txt", "samples/split_30_70_good_verb_srl/dev.txt")
+# convert_mctaco_data("samples/split_30_70_good/test.txt", "samples/split_30_70_good_verb_srl/test.txt")
 

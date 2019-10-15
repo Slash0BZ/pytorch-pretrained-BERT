@@ -36,7 +36,7 @@ from tqdm import tqdm, trange
 from torch.nn import CrossEntropyLoss
 
 from pytorch_pretrained_bert.file_utils import PYTORCH_PRETRAINED_BERT_CACHE
-from pytorch_pretrained_bert.modeling import BertForSingleTokenClassification, BertForSingleTokenClassificationFollowTemporal, TemporalModelJoint, TemporalModelJointWithLikelihood, BertConfig, WEIGHTS_NAME, CONFIG_NAME, BertForSingleTokenClassificationWithPooler
+from pytorch_pretrained_bert.modeling import BertForSingleTokenClassification, BertForSingleTokenClassificationFollowTemporal, TemporalModelJoint, TemporalModelJointWithLikelihood, BertConfig, WEIGHTS_NAME, CONFIG_NAME, BertForSingleTokenClassificationWithPooler, TemporalModelArguments
 from pytorch_pretrained_bert.tokenization import BertTokenizer, BasicTokenizer
 from pytorch_pretrained_bert.optimization import BertAdam, warmup_linear
 
@@ -50,7 +50,7 @@ class InputExample(object):
     """A single training/test example for simple sequence classification."""
 
     def __init__(self, guid, text_a, text_b, label_a, label_b, target_idx_a,
-                 target_idx_b, rel_label, inst_type):
+                 target_idx_b):
         self.guid = guid
         self.text_a = text_a
         self.text_b = text_b
@@ -58,35 +58,19 @@ class InputExample(object):
         self.label_b = label_b
         self.target_idx_a = target_idx_a
         self.target_idx_b = target_idx_b
-        self.rel_label = rel_label
-        self.inst_type = inst_type
 
 
 class InputFeatures(object):
 
-    def __init__(self, input_ids_a, input_ids_b, input_mask_a, input_mask_b, segment_ids_a, segment_ids_b,
-                 label_id_a, label_id_b, target_idx_a, target_idx_b, adjustment_a, adjustment_b,
-                 soft_target_a, soft_target_b, lm_labels_a, lm_labels_b,
-                 lh_labels_a, lh_labels_b, rel_soft_target):
-        self.input_ids_a = input_ids_a
-        self.input_ids_b = input_ids_b
-        self.input_mask_a = input_mask_a
-        self.input_mask_b = input_mask_b
-        self.segment_ids_a = segment_ids_a
-        self.segment_ids_b = segment_ids_b
-        self.label_id_a = label_id_a
-        self.label_id_b = label_id_b
+    def __init__(self, input_ids, input_mask, segment_ids, lm_labels, target_idx_a, target_idx_b, soft_labels_a, soft_labels_b):
+        self.input_ids = input_ids
+        self.input_mask = input_mask
+        self.segment_ids = segment_ids
+        self.lm_labels = lm_labels
         self.target_idx_a = target_idx_a
         self.target_idx_b = target_idx_b
-        self.adjustment_a = adjustment_a
-        self.adjustment_b = adjustment_b
-        self.soft_target_a = soft_target_a
-        self.soft_target_b = soft_target_b
-        self.lm_labels_a = lm_labels_a
-        self.lm_labels_b = lm_labels_b
-        self.lh_labels_a = lh_labels_a
-        self.lh_labels_b = lh_labels_b
-        self.rel_soft_target = rel_soft_target
+        self.soft_target_a = soft_labels_a
+        self.soft_target_b = soft_labels_b
 
 
 class DataProcessor(object):
@@ -124,15 +108,6 @@ class TemporalVerbProcessor(DataProcessor):
         f = open(os.path.join(data_dir, "train.formatted.txt"), "r")
         lines = [x.strip() for x in f.readlines()]
         examples = self._create_examples(lines, "train")
-        count_map = {}
-        for e in examples:
-            if e.label_a not in count_map:
-                count_map[e.label_a] = 0
-            if e.label_b not in count_map:
-                count_map[e.label_b] = 0
-            count_map[e.label_a] += 1
-            count_map[e.label_b] += 1
-        print(count_map)
         return examples
 
     def get_dev_examples(self, data_dir):
@@ -140,108 +115,35 @@ class TemporalVerbProcessor(DataProcessor):
         lines = [x.strip() for x in f.readlines()]
         return self._create_examples(lines, "dev")
 
-    def get_labels(self):
-        return [
-            "seconds",
-            "minutes",
-            "hours",
-            "days",
-            "weeks",
-            "months",
-            "years",
-            "decades",
-            "centuries",
-        ]
-
-    def get_typical_labels(self):
-        return [
-            # time of the dar
-            "dawn", "morning", "noon", "afternoon", "evening", "dusk", "night", "midnight",
-            # time of the week
-            "monday", "tuesday", "wednesday", 'thursday', "friday", "saturday", "sunday",
-            # time of the year
-            "january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december",
-            # time of the year
-            "spring", "summer", "autumn", "winter",
-        ]
-
-    def plural_units(self, u):
-        m = {
-            "second": "seconds",
-            "minute": "minutes",
-            "hour": "hours",
-            "day": "days",
-            "week": "weeks",
-            "month": "months",
-            "year": "years",
-            "decade": "decades",
-            "century": "centuries",
-        }
-        if u in m:
-            return m[u]
-        return u
-
-    def normalize_timex(self, v_input, u):
-        if u in ["instantaneous", "forever"]:
-            return u, str(1)
-
-        convert_map = {
-            "seconds": 1.0,
-            "minutes": 60.0,
-            "hours": 60.0 * 60.0,
-            "days": 24.0 * 60.0 * 60.0,
-            "weeks": 7.0 * 24.0 * 60.0 * 60.0,
-            "months": 30.0 * 24.0 * 60.0 * 60.0,
-            "years": 365.0 * 24.0 * 60.0 * 60.0,
-            "decades": 10.0 * 365.0 * 24.0 * 60.0 * 60.0,
-            "centuries": 100.0 * 365.0 * 24.0 * 60.0 * 60.0,
-        }
-        seconds = convert_map[self.plural_units(u)] * float(v_input)
-        prev_unit = "seconds"
-        for i, v in enumerate(convert_map):
-            if seconds / convert_map[v] < 0.5:
-                break
-            prev_unit = v
-        if prev_unit == "seconds" and seconds > 60.0:
-            prev_unit = "centuries"
-        new_val = int(seconds / convert_map[prev_unit])
-
-        return prev_unit, str(new_val)
-
     def _create_examples(self, lines, set_type):
         """Creates examples for the training and dev sets."""
 
         examples = []
-        for (i, line) in enumerate(lines):
-            groups = line.split("\t")
+        for i in range(0, len(lines) - 1, 2):
+            groups_a = lines[i].split("\t")
+            groups_b = lines[i+1].split("\t")
             guid = "%s-%s" % (set_type, i)
-            if len(groups) == 7:
-                text_a = groups[0]
-                target_idx_a = int(groups[1])
-                label_a = groups[2]
-                text_b = groups[3]
-                target_idx_b = int(groups[4])
-                label_b = groups[5]
-                rel_label = groups[6]
-                if len(text_a.split()) > 120 or len(text_b.split()) > 120:
-                    continue
-
-                if label_a != "NONE" and groups[-1] in ["DUR", "FREQ"]:
-                    label_a_num = float(label_a.split()[0])
-                    label_a, _ = self.normalize_timex(label_a_num, label_a.split()[1].lower())
-
-                if label_b != "NONE" and groups[-1] in ["DUR", "FREQ"]:
-                    label_b_num = float(label_b.split()[0])
-                    label_b, _ = self.normalize_timex(label_b_num, label_b.split()[1].lower())
-
-                examples.append(
-                    InputExample(
-                        guid=guid, text_a=text_a, text_b=text_b, label_a=label_a, label_b=label_b,
-                        target_idx_a=target_idx_a, target_idx_b=target_idx_b, rel_label=rel_label, inst_type=groups[-1]
-                    )
-                )
+            text_a = groups_a[0]
+            if len(groups_a) > 1:
+                target_idx_a = int(groups_a[1])
+                label_a = text_a.split()[target_idx_a].lower()
             else:
-                continue
+                target_idx_a = 0
+                label_a = "seconds"
+            text_b = groups_b[0]
+            if len(groups_b) > 1:
+                target_idx_b = int(groups_b[1])
+                label_b = text_b.split()[target_idx_b].lower()
+            else:
+                target_idx_b = 0
+                label_b = "seconds"
+
+            examples.append(
+                InputExample(
+                    guid=guid, text_a=text_a, text_b=text_b, label_a=label_a, label_b=label_b,
+                    target_idx_a=target_idx_a, target_idx_b=target_idx_b
+                )
+            )
 
         return examples
 
@@ -254,7 +156,8 @@ def randomize_likelihood_labels(l):
             ret[i] = 0
     return ret
 
-def randomize_tokens(tokens, tokenizer):
+
+def random_word(tokens, target_id, tokenizer):
     output_label = []
 
     for i, token in enumerate(tokens):
@@ -278,11 +181,19 @@ def randomize_tokens(tokens, tokenizer):
                 output_label.append(tokenizer.vocab[token])
             except KeyError:
                 # For unknown words (should not occur with BPE vocab)
-                output_label.append(tokenizer.vocab["[UNK]"])
-                # logger.warning("Cannot find token '{}' in vocab. Using [UNK] insetad".format(token))
+                """CHANGED: NEVER PREDICT [UNK]"""
+                # output_label.append(tokenizer.vocab["[UNK]"])
+                output_label.append(-1)
         else:
             # no masking token (will be ignored by loss function later)
             output_label.append(-1)
+
+    tmp_prob = random.random()
+    # Sum with 0.15 to 80
+    # Yet never compute loss until feedback
+    output_label[target_id] = -1
+    if tmp_prob < 0.65:
+        tokens[target_id] = "[MASK]"
 
     return tokens, output_label
 
@@ -303,158 +214,205 @@ def assign_round_soft_label(length, target):
     return ret_vec
 
 
-def convert_single_pair(text, target_idx, label, tokenizer, max_seq_length, label_map, typical_label_map, inst_type):
-    tokens = text.lower().split()
-    """
-    MASKING TOKENS FOR LM LOSSES
-    """
-    tokens, masking_labels = randomize_tokens(tokens, tokenizer)
-    masking_labels = [-1] + masking_labels + [-1]
-    """"""
-    """
-    GEN RANDOM LIKELIHOOD LABELS
-    """
-    likelihood_labels = randomize_likelihood_labels(max_seq_length)
-    likelihood_labels[target_idx + 1] = 1
-    """END"""
-    tokens = ["[CLS]"] + tokens + ["[SEP]"]
-    segment_ids = [0] * len(tokens)
-    input_ids = tokenizer.convert_tokens_to_ids(tokens)
-    input_mask = [1] * len(input_ids)
-    padding = [0] * (max_seq_length - len(input_ids))
-    masking_labels += [-1] * (max_seq_length - len(input_ids))
-    input_ids += padding
-    input_mask += padding
-    segment_ids += padding
+def _truncate_seq_pair(tokens_a, tokens_b, max_length):
+    """Truncates a sequence pair in place to the maximum length."""
 
-    assert len(input_ids) == max_seq_length
-    assert len(input_mask) == max_seq_length
-    assert len(segment_ids) == max_seq_length
-
-    if inst_type in ["FREQ", "DUR"]:
-        if label == "NONE":
-            label_id = -1
-            soft_labels = None
+    # This is a simple heuristic which will always truncate the longer sequence
+    # one token at a time. This makes more sense than truncating an equal percent
+    # of tokens from each, since if one sequence is very short then each token
+    # that's truncated likely contains more information than a longer sequence.
+    while True:
+        total_length = len(tokens_a) + len(tokens_b)
+        if total_length <= max_length:
+            break
+        if len(tokens_a) > len(tokens_b):
+            tokens_a.pop()
         else:
-            label_id = label_map[label]
-            label_size = len(label_map)
-            soft_labels = [0.0] * label_size
-            label_vector = [0.383, 0.242, 0.06, 0.006, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-            for i in range(label_id, len(soft_labels)):
-                soft_labels[i] = label_vector[i - label_id]
-            for i in range(label_id - 1, -1, -1):
-                soft_labels[i] = label_vector[label_id - i]
-    elif inst_type in ["TYPICAL"]:
-        label_id = typical_label_map[label]
-        # soft_labels = [0.0] * 31
-        # soft_labels[label_id] = 1.0
-        if 0 <= label_id < 8:
-            soft_labels = assign_round_soft_label(8, label_id) + [0.0] * 23
-        elif 8 <= label_id < 15:
-            soft_labels = [0.0] * 8 + assign_round_soft_label(7, label_id - 8) + [0.0] * 16
-        elif 15 <= label_id < 27:
-            soft_labels = [0.0] * 15 + assign_round_soft_label(12, label_id - 15) + [0.0] * 4
-        else:
-            soft_labels = [0.0] * 27 + assign_round_soft_label(4, label_id - 27)
-    else:
-        label_id = -1
-        soft_labels = None
+            tokens_b.pop()
 
-    if inst_type == "FREQ":
-        soft_labels = soft_labels + [0.0] * len(label_map) + [0.0] * len(typical_label_map)
-    if inst_type == "DUR":
-        soft_labels = [0.0] * len(label_map) + soft_labels + [0.0] * len(typical_label_map)
-    if inst_type == "TYPICAL":
-        soft_labels = [0.0] * len(label_map) + [0.0] * len(label_map) + soft_labels
 
-    weight_map_duration = {
-        0: 11.66,
-        1: 2.04,
-        2: 2.08,
-        3: 1.71,
-        4: 1.33,
-        5: 0.78,
-        6: 0.44,
-        7: 0.35,
-        8: 2.74
+def get_soft_labels(orig_label, vocab_size=30522):
+    keywords = {
+        "second": [0, 0],
+        "seconds": [0, 0],
+        "minute": [0, 1],
+        "minutes": [0, 1],
+        "hour": [0, 2],
+        "hours": [0, 2],
+        "day": [0, 3],
+        "days": [0, 3],
+        "week": [0, 4],
+        "weeks": [0, 4],
+        "month": [0, 5],
+        "months": [0, 5],
+        "year": [0, 6],
+        "years": [0, 6],
+        "decade": [0, 7],
+        "decades": [0, 7],
+        "century": [0, 8],
+        "centuries": [0, 8],
+        "dawns": [1, 0],
+        "mornings": [1, 1],
+        "noons": [1, 2],
+        "afternoons": [1, 3],
+        "evenings": [1, 4],
+        "dusks": [1, 5],
+        "nights": [1, 6],
+        "midnights": [1, 7],
+        "dawn": [1, 0],
+        "morning": [1, 1],
+        "noon": [1, 2],
+        "afternoon": [1, 3],
+        "evening": [1, 4],
+        "dusk": [1, 5],
+        "night": [1, 6],
+        "midnight": [1, 7],
+        "monday": [2, 0],
+        "tuesday": [2, 1],
+        "wednesday": [2, 2],
+        "thursday": [2, 3],
+        "friday": [2, 4],
+        "saturday": [2, 5],
+        "sunday": [2, 6],
+        "mondays": [2, 0],
+        "tuesdays": [2, 1],
+        "wednesdays": [2, 2],
+        "thursdays": [2, 3],
+        "fridays": [2, 4],
+        "saturdays": [2, 5],
+        "sundays": [2, 6],
+        "january": [3, 0],
+        "february": [3, 1],
+        "march": [3, 2],
+        "april": [3, 3],
+        "may": [3, 4],
+        "june": [3, 5],
+        "july": [3, 6],
+        "august": [3, 7],
+        "september": [3, 8],
+        "october": [3, 9],
+        "november": [3, 10],
+        "december": [3, 11],
+        "januarys": [3, 0],
+        "januaries": [3, 0],
+        "februarys": [3, 1],
+        "februaries": [3, 1],
+        "marches": [3, 2],
+        "marchs": [3, 2],
+        "aprils": [3, 3],
+        "mays": [3, 4],
+        "junes": [3, 5],
+        "julys": [3, 6],
+        "julies": [3, 6],
+        "augusts": [3, 7],
+        "septembers": [3, 8],
+        "octobers": [3, 9],
+        "novembers": [3, 10],
+        "decembers": [3, 11],
+        "springs": [4, 0],
+        "summers": [4, 1],
+        "autumns": [4, 2],
+        "winters": [4, 3],
+        "spring": [4, 0],
+        "summer": [4, 1],
+        "autumn": [4, 2],
+        "winter": [4, 3],
     }
-    weight_map_typ = [
-        1.33, 0.47, 3.05, 0.66, 1.79, 26.68, 0.53, 1.24, 0.90, 0.87, 0.88, 0.88, 0.95, 1.42, 1.38, 1.03, 1.35, 0.90,
-        1.08, 0.94, 0.87, 0.91, 1.09, 0.93, 1.05, 1.03, 0.98, 1.32, 0.47, 2.06, 1.57
-    ]
+    vocab_indices = {
+        0: [3823, 2781, 2847, 2420, 3134, 2706, 2086, 5109, 4693],
+        1: [6440, 2851, 11501, 5027, 3944, 18406, 2305, 7090],
+        2: [6928, 9857, 9317, 9432, 5958, 5095, 4465],
+        3: [2254, 2337, 2233, 2258, 2089, 2238, 2251, 2257, 2244, 2255, 2281, 2285],
+        4: [3500, 2621, 7114, 3467],
+    }
+    if orig_label not in keywords:
+        return None
+    label_group = keywords[orig_label][0]
+    label_id = keywords[orig_label][1]
+    all_soft_labels = [0.0] * vocab_size
+    soft_labels = [0.0] * len(vocab_indices[label_group])
+    if label_group == 0:
+        label_vector = [0.383, 0.242, 0.06, 0.006, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        for i in range(label_id, len(soft_labels)):
+            soft_labels[i] = label_vector[i - label_id]
+        for i in range(label_id - 1, -1, -1):
+            soft_labels[i] = label_vector[label_id - i]
+    else:
+        soft_labels = assign_round_soft_label(len(soft_labels), label_id)
 
-    adjustment = 1.0
-    if inst_type == "DUR":
-        if label_id > -1:
-            adjustment = weight_map_duration[label_id]
-    if inst_type == "TYPICAL":
-        if label_id > -1:
-            adjustment = weight_map_typ[label_id]
+    for idx, sl in enumerate(soft_labels):
+        all_soft_labels[vocab_indices[label_group][idx]] = soft_labels[idx]
 
-    return input_ids, input_mask, segment_ids, label_id, target_idx + 1, adjustment, soft_labels, masking_labels, likelihood_labels
+    return all_soft_labels
 
 
-def convert_examples_to_features(examples, label_list, typical_label_list, max_seq_length, tokenizer):
+def convert_examples_to_features(examples, max_seq_length, tokenizer):
     """Loads a data file into a list of `InputBatch`s."""
-
-    label_map = {label : i for i, label in enumerate(label_list)}
-    typical_label_map = {label: i for i, label in enumerate(typical_label_list)}
 
     features = []
     for (ex_index, example) in enumerate(examples):
         if ex_index % 10000 == 0:
             logger.info("Writing example %d of %d" % (ex_index, len(examples)))
 
-        input_ids_a, input_mask_a, segment_ids_a, label_id_a, target_idx_a, adjustment_a, soft_labels_a, lm_labels_a, lh_labels_a = convert_single_pair(
-            example.text_a, example.target_idx_a, example.label_a, tokenizer, max_seq_length, label_map, typical_label_map, example.inst_type
-        )
+        tokens_a, lm_labels_a = random_word(example.text_a.lower().split(), example.target_idx_a, tokenizer)
+        tokens_b, lm_labels_b = random_word(example.text_b.lower().split(), example.target_idx_b, tokenizer)
+        """NOTE BYPASSING MASKING"""
+        # tokens_a = example.text_a.lower().split()
+        # tokens_a[example.target_idx_a] = "[MASK]"
+        # lm_labels_a = [-1] * len(tokens_a)
+        # tokens_b = example.text_b.lower().split()
+        # tokens_b[example.target_idx_b] = "[MASK]"
+        # lm_labels_b = [-1] * len(tokens_b)
 
-        if example.text_b is not None:
-            input_ids_b, input_mask_b, segment_ids_b, label_id_b, target_idx_b, adjustment_b, soft_labels_b, lm_labels_b, lh_labels_b = convert_single_pair(
-                example.text_b, example.target_idx_b, example.label_b, tokenizer, max_seq_length, label_map, typical_label_map, example.inst_type
-            )
-        else:
-            print("ERROR!")
-            input_ids_b, input_mask_b, segment_ids_b, label_id_b, target_idx_b, adjustment_b, soft_labels_b, lm_labels_b, lh_labels_b = [None] * len(label_list)
+        if len(tokens_a) + len(tokens_b) + 3 > max_seq_length:
+            # Never delete any token
+            continue
 
-        rel_soft_labels = [0.0] * 2
-        if example.rel_label == "LESS":
-            rel_soft_labels[0] = 1.0
-        elif example.rel_label == "MORE":
-            rel_soft_labels[1] = 1.0
+        tokens = ["[CLS]"] + tokens_a + ["[SEP]"] + tokens_b + ["[SEP]"]
+        lm_labels = [-1] + lm_labels_a + [-1] + lm_labels_b + [-1]
+
+        input_ids = tokenizer.convert_tokens_to_ids(tokens)
+        input_mask = [1] * len(input_ids)
+        segment_ids = [0] * (len(tokens_a) + 2) + [1] * (len(tokens_b) + 1)
+        padding = [0] * (max_seq_length - len(input_ids))
+        lm_padding = [-1] * (max_seq_length - len(input_ids))
+
+        input_ids += padding
+        input_mask += padding
+        segment_ids += padding
+        lm_labels += lm_padding
+
+        assert len(input_ids) == max_seq_length
+        assert len(input_mask) == max_seq_length
+        assert len(segment_ids) == max_seq_length
+        assert len(lm_labels) == max_seq_length
+
+        target_idx_a = example.target_idx_a + 1
+        target_idx_b = example.target_idx_b + len(tokens_a) + 2
+
+        soft_labels_a = get_soft_labels(example.label_a.lower())
+        soft_labels_b = get_soft_labels(example.label_b.lower())
+
+        if soft_labels_a is None or soft_labels_b is None:
+            # FIX HERE
+            continue
 
         if ex_index < 5:
             logger.info("*** Example ***")
             logger.info("tokens: %s" % " ".join(
                 [str(x) for x in example.text_a.split()]))
             logger.info("label: %s" % example.label_a)
-            logger.info("soft label: %s" % " ".join(str(x) for x in soft_labels_a))
-            logger.info("input ids: %s" % " ".join(str(x) for x in input_ids_a))
-            logger.info("LM label: %s" % " ".join(str(x) for x in lm_labels_a))
-            logger.info("LH label: %s" % " ".join(str(x) for x in lh_labels_a))
-            logger.info("Classification label: %s" % label_id_a)
 
         features.append(
             InputFeatures(
-                input_ids_a=input_ids_a,
-                input_ids_b=input_ids_b,
-                input_mask_a=input_mask_a,
-                input_mask_b=input_mask_b,
-                segment_ids_a=segment_ids_a,
-                segment_ids_b=segment_ids_b,
-                label_id_a=label_id_a,
-                label_id_b=label_id_b,
+                input_ids=input_ids,
+                input_mask=input_mask,
+                segment_ids=segment_ids,
+                lm_labels=lm_labels,
                 target_idx_a=target_idx_a,
                 target_idx_b=target_idx_b,
-                adjustment_a=adjustment_a,
-                adjustment_b=adjustment_b,
-                soft_target_a=soft_labels_a,
-                soft_target_b=soft_labels_b,
-                lm_labels_a=lm_labels_a,
-                lm_labels_b=lm_labels_b,
-                lh_labels_a=lh_labels_a,
-                lh_labels_b=lh_labels_b,
-                rel_soft_target=rel_soft_labels
+                soft_labels_a=soft_labels_a,
+                soft_labels_b=soft_labels_b,
             )
         )
     return features
@@ -483,19 +441,46 @@ def compute_metrics(task_name, preds, labels, additional=None):
         raise KeyError(task_name)
 
 
-def soft_cross_entropy_loss(logits_a, logits_b, soft_target_a, soft_target_b, adjustment_a, adjustment_b, lm_loss):
-    loss_a = -soft_target_a * torch.log(logits_a)
-    loss_a = torch.sum(loss_a, -1) * adjustment_a
+def soft_cross_entropy_loss(logits_a, logits_b, soft_target_a, soft_target_b, lm_loss):
+    loss_a = -soft_target_a * torch.log(nn.functional.softmax(logits_a, -1))
+    loss_a = torch.sum(loss_a, -1)
 
-    loss_b = -soft_target_b * torch.log(logits_b)
-    loss_b = torch.sum(loss_b, -1) * adjustment_b
+    loss_b = -soft_target_b * torch.log(nn.functional.softmax(logits_b, -1))
+    loss_b = torch.sum(loss_b, -1)
 
     mean_loss = loss_a.mean() + loss_b.mean()
 
     if lm_loss is not None:
         return mean_loss + lm_loss, mean_loss.item()
     else:
-        return mean_loss, mean_loss.item()
+        return mean_loss.item()
+
+
+def compute_distance(logits, target):
+    vocab_indices = {
+        0: [3823, 2781, 2847, 2420, 3134, 2706, 2086, 5109, 4693],
+        1: [6440, 2851, 11501, 5027, 3944, 18406, 2305, 7090],
+        2: [6928, 9857, 9317, 9432, 5958, 5095, 4465],
+        3: [2254, 2337, 2233, 2258, 2089, 2238, 2251, 2257, 2244, 2255, 2281, 2285],
+        4: [3500, 2621, 7114, 3467],
+    }
+    reverse_map = {}
+    index_map = {}
+    avg_dist = 0.0
+    for i in vocab_indices:
+        for j, idx in enumerate(vocab_indices[i]):
+            reverse_map[idx] = vocab_indices[i]
+            index_map[idx] = j
+    for i in range(0, logits.shape[0]):
+        label_id = int(np.argmax(target[i]))
+        group_indices = reverse_map[label_id]
+        scores_in_order = []
+        for gi in group_indices:
+            scores_in_order.append(logits[i][gi])
+        predicted_relative_label_id = int(np.argmax(np.array(scores_in_order)))
+        avg_dist += abs(index_map[label_id] - predicted_relative_label_id)
+
+    return float(avg_dist) / float(logits.shape[0])
 
 
 def main():
@@ -645,11 +630,6 @@ def main():
 
     processor = processors[task_name]()
 
-    label_list = processor.get_labels()
-    typical_label_list = processor.get_typical_labels()
-    num_labels = len(label_list)
-    num_typical_labels = len(typical_label_list)
-
     tokenizer = BertTokenizer.from_pretrained(args.bert_model, do_lower_case=args.do_lower_case)
 
     train_examples = None
@@ -663,18 +643,7 @@ def main():
 
     # Prepare model
     cache_dir = args.cache_dir if args.cache_dir else os.path.join(str(PYTORCH_PRETRAINED_BERT_CACHE), 'distributed_{}'.format(args.local_rank))
-    model = TemporalModelJointWithLikelihood.from_pretrained(args.bert_model,
-              cache_dir=cache_dir,
-              num_labels=num_labels,
-              num_typical_labels=num_typical_labels)
-    # for p in model.bert.parameters():
-    #     p.requires_grad = False
-    # for p in model.dur_classifier.parameters():
-    #     p.requires_grad = False
-    # for p in model.freq_classifier.parameters():
-    #     p.requires_grad = False
-    # for p in model.typical_classifier.parameters():
-    #     p.requires_grad = False
+    model = TemporalModelArguments.from_pretrained(args.bert_model, cache_dir=cache_dir)
 
     if args.fp16:
         model.half()
@@ -724,38 +693,24 @@ def main():
     tr_loss = 0
     if args.do_train:
         train_features = convert_examples_to_features(
-            train_examples, label_list, typical_label_list, args.max_seq_length, tokenizer)
+            train_examples, args.max_seq_length, tokenizer)
         logger.info("***** Running training *****")
         logger.info("  Num examples = %d", len(train_examples))
         logger.info("  Batch size = %d", args.train_batch_size)
         logger.info("  Num steps = %d", num_train_optimization_steps)
 
-        all_input_ids_a = torch.tensor([f.input_ids_a for f in train_features], dtype=torch.long)
-        all_input_mask_a = torch.tensor([f.input_mask_a for f in train_features], dtype=torch.long)
-        all_segment_ids_a = torch.tensor([f.segment_ids_a for f in train_features], dtype=torch.long)
+        all_input_ids = torch.tensor([f.input_ids for f in train_features], dtype=torch.long)
+        all_input_mask = torch.tensor([f.input_mask for f in train_features], dtype=torch.long)
+        all_segment_ids = torch.tensor([f.segment_ids for f in train_features], dtype=torch.long)
+        all_lm_labels = torch.tensor([f.lm_labels for f in train_features], dtype=torch.long)
         all_target_idxs_a = torch.tensor([f.target_idx_a for f in train_features], dtype=torch.long)
         all_soft_targets_a = torch.tensor([f.soft_target_a for f in train_features], dtype=torch.float)
-        all_adjustments_a = torch.tensor([f.adjustment_a for f in train_features], dtype=torch.float)
-        all_label_ids_a = torch.tensor([f.label_id_a for f in train_features], dtype=torch.long)
-        all_lm_labels_a = torch.tensor([f.lm_labels_a for f in train_features], dtype=torch.long)
-        all_lh_labels_a = torch.tensor([f.lh_labels_a for f in train_features], dtype=torch.long)
-
-        all_input_ids_b = torch.tensor([f.input_ids_b for f in train_features], dtype=torch.long)
-        all_input_mask_b = torch.tensor([f.input_mask_b for f in train_features], dtype=torch.long)
-        all_segment_ids_b = torch.tensor([f.segment_ids_b for f in train_features], dtype=torch.long)
         all_target_idxs_b = torch.tensor([f.target_idx_b for f in train_features], dtype=torch.long)
         all_soft_targets_b = torch.tensor([f.soft_target_b for f in train_features], dtype=torch.float)
-        all_adjustments_b = torch.tensor([f.adjustment_b for f in train_features], dtype=torch.float)
-        all_label_ids_b = torch.tensor([f.label_id_b for f in train_features], dtype=torch.long)
-        all_lm_labels_b = torch.tensor([f.lm_labels_b for f in train_features], dtype=torch.long)
-        all_lh_labels_b = torch.tensor([f.lh_labels_b for f in train_features], dtype=torch.long)
-
-        all_rel_labels = torch.tensor([f.rel_soft_target for f in train_features], dtype=torch.float)
 
         train_data = TensorDataset(
-            all_input_ids_a, all_input_mask_a, all_segment_ids_a, all_target_idxs_a, all_soft_targets_a, all_adjustments_a,
-            all_input_ids_b, all_input_mask_b, all_segment_ids_b, all_target_idxs_b, all_soft_targets_b, all_adjustments_b,
-            all_rel_labels, all_label_ids_a, all_label_ids_b, all_lm_labels_a, all_lm_labels_b, all_lh_labels_a, all_lh_labels_b
+            all_input_ids, all_input_mask, all_segment_ids, all_lm_labels,
+            all_target_idxs_a, all_soft_targets_a, all_target_idxs_b, all_soft_targets_b,
         )
         if args.local_rank == -1:
             train_sampler = RandomSampler(train_data)
@@ -781,21 +736,15 @@ def main():
                     epoch_label_loss = 0.0
 
                 batch = tuple(t.to(device) for t in batch)
-                input_ids_a, input_mask_a, segment_ids_a, target_ids_a, soft_targets_a, adjustments_a, \
-                input_ids_b, input_mask_b, segment_ids_b, target_ids_b, soft_targets_b, adjustments_b, rel_labels, \
-                label_ids_a, label_ids_b, lm_labels_a, lm_labels_b, lh_labels_a, lh_labels_b = batch
+                input_ids, input_mask, segment_ids, lm_labels, target_ids_a, soft_targets_a, target_ids_b, soft_targets_b = batch
 
-                # define a new function to compute loss values for both output_modes
-                logits_a, logits_b, lm_loss = model(
-                    input_ids_a, segment_ids_a, input_mask_a, target_ids_a,
-                    input_ids_b, segment_ids_b, input_mask_b, target_ids_b,
-                    lm_labels_a, lm_labels_b, lh_labels_a, lh_labels_b
+                lm_loss, cls_a, cls_b = model(
+                    input_ids, segment_ids, input_mask, lm_labels, target_ids_a, target_ids_b
                 )
 
                 loss, non_lm_loss = soft_cross_entropy_loss(
-                    logits_a.view(-1, num_labels * 2 + num_typical_labels), logits_b.view(-1, num_labels * 2 + num_typical_labels),
+                    cls_a.view(-1, 30522), cls_b.view(-1, 30522),
                     soft_targets_a, soft_targets_b,
-                    adjustments_a, adjustments_b,
                     lm_loss
                 )
 
@@ -826,7 +775,7 @@ def main():
                     middle_loss = 0.0
                     middle_label_loss = 0.0
                     middle_rel_loss = 0.0
-                nb_tr_examples += input_ids_a.size(0) * 2
+                nb_tr_examples += input_ids.size(0) * 2
                 nb_tr_steps += 1
                 if step % 1000 == 0:
                     actual_dir = args.output_dir + "_epoch_" + str(_)
@@ -862,40 +811,31 @@ def main():
 
         # Load a trained model and config that you have fine-tuned
         config = BertConfig(output_config_file)
-        model = TemporalModelJointWithLikelihood(config, num_labels=num_labels, num_typical_labels=num_typical_labels)
+        model = TemporalModelArguments(config)
         model.load_state_dict(torch.load(output_model_file))
     else:
-        model = TemporalModelJointWithLikelihood.from_pretrained(args.bert_model, num_labels=num_labels, num_typical_labels=num_typical_labels)
+        model = TemporalModelArguments.from_pretrained(args.bert_model)
     model.to(device)
 
     if args.do_eval and (args.local_rank == -1 or torch.distributed.get_rank() == 0):
         eval_examples = processor.get_dev_examples(args.data_dir)
         eval_features = convert_examples_to_features(
-            eval_examples, label_list, typical_label_list, args.max_seq_length, tokenizer)
+            eval_examples, args.max_seq_length, tokenizer)
         logger.info("***** Running evaluation *****")
         logger.info("  Num examples = %d", len(eval_examples))
         logger.info("  Batch size = %d", args.eval_batch_size)
 
-        all_input_ids_a = torch.tensor([f.input_ids_a for f in eval_features], dtype=torch.long)
-        all_input_mask_a = torch.tensor([f.input_mask_a for f in eval_features], dtype=torch.long)
-        all_segment_ids_a = torch.tensor([f.segment_ids_a for f in eval_features], dtype=torch.long)
+        all_input_ids = torch.tensor([f.input_ids for f in eval_features], dtype=torch.long)
+        all_input_mask = torch.tensor([f.input_mask for f in eval_features], dtype=torch.long)
+        all_segment_ids = torch.tensor([f.segment_ids for f in eval_features], dtype=torch.long)
+        all_lm_labels = torch.tensor([f.lm_labels for f in eval_features], dtype=torch.long)
         all_target_idxs_a = torch.tensor([f.target_idx_a for f in eval_features], dtype=torch.long)
-        all_soft_targets_a = torch.tensor([f.soft_target_a for f in eval_features], dtype=torch.float)
-        all_adjustments_a = torch.tensor([f.adjustment_a for f in eval_features], dtype=torch.float)
-
-        all_input_ids_b = torch.tensor([f.input_ids_b for f in eval_features], dtype=torch.long)
-        all_input_mask_b = torch.tensor([f.input_mask_b for f in eval_features], dtype=torch.long)
-        all_segment_ids_b = torch.tensor([f.segment_ids_b for f in eval_features], dtype=torch.long)
         all_target_idxs_b = torch.tensor([f.target_idx_b for f in eval_features], dtype=torch.long)
+        all_soft_targets_a = torch.tensor([f.soft_target_a for f in eval_features], dtype=torch.float)
         all_soft_targets_b = torch.tensor([f.soft_target_b for f in eval_features], dtype=torch.float)
-        all_adjustments_b = torch.tensor([f.adjustment_b for f in eval_features], dtype=torch.float)
-
-        all_rel_labels = torch.tensor([f.rel_soft_target for f in eval_features], dtype=torch.float)
 
         eval_data = TensorDataset(
-            all_input_ids_a, all_input_mask_a, all_segment_ids_a, all_target_idxs_a, all_soft_targets_a, all_adjustments_a,
-            all_input_ids_b, all_input_mask_b, all_segment_ids_b, all_target_idxs_b, all_soft_targets_b, all_adjustments_b,
-            all_rel_labels
+            all_input_ids, all_input_mask, all_segment_ids, all_lm_labels, all_target_idxs_a, all_soft_targets_a, all_target_idxs_b, all_soft_targets_b,
         )
 
         # Run prediction for full data
@@ -903,41 +843,33 @@ def main():
         eval_dataloader = DataLoader(eval_data, sampler=eval_sampler, batch_size=args.eval_batch_size)
 
         model.eval()
-        eval_loss = 0
-        nb_eval_steps = 0
-        preds = []
 
         output_file = os.path.join(args.output_dir, "bert_logits.txt")
         f_out = open(output_file, "w")
+        total_loss = []
+        lm_total_loss = []
+        prediction_distance = []
         for batch in tqdm(eval_dataloader, desc="Evaluating"):
             batch = tuple(t.to(device) for t in batch)
-            input_ids_a, input_mask_a, segment_ids_a, target_ids_a, soft_targets_a, adjustments_a, \
-            input_ids_b, input_mask_b, segment_ids_b, target_ids_b, soft_targets_b, adjustments_b, rel_labels = batch
+            input_ids, input_mask, segment_ids, lm_labels, target_ids_a, soft_targets_a, target_ids_b, soft_targets_b = batch
 
             with torch.no_grad():
-                logits_a, logits_b, _ = model(
-                    input_ids_a, segment_ids_a, input_mask_a, target_ids_a,
-                    input_ids_b, segment_ids_b, input_mask_b, target_ids_b, None, None
+                lm_loss, cls_a, cls_b = model(
+                    input_ids, segment_ids, input_mask, lm_labels, target_ids_a, target_ids_b
                 )
-                logits = torch.cat((logits_a, logits_b), -1)
+                cls_a = cls_a.view(-1, 30522)
+                cls_b = cls_b.view(-1, 30522)
+                avg_loss = soft_cross_entropy_loss(cls_a, cls_b, soft_targets_a, soft_targets_b, None)
+            prediction_distance.append((compute_distance(cls_a.cpu().numpy(), soft_targets_a.cpu().numpy()) + compute_distance(cls_b.cpu().numpy(), soft_targets_b.cpu().numpy())) / 2.0)
+            lm_total_loss.append(lm_loss.item())
+            total_loss.append(avg_loss)
 
-            w_ready_logits = logits.detach().cpu().numpy()
-            for l in w_ready_logits:
-                # ll = l[0]
-                ll = l
-                s = ""
-                for lll in ll:
-                    s += str(lll) + "\t"
-                f_out.write(s + "\n")
-            nb_eval_steps += 1
-            if len(preds) == 0:
-                preds.append(logits.detach().cpu().numpy())
-            else:
-                preds[0] = np.append(
-                    preds[0], logits.detach().cpu().numpy(), axis=0)
-
-        eval_loss = eval_loss / nb_eval_steps
-        loss = tr_loss/nb_tr_steps if args.do_train else None
+        f_out.write("Temporal Loss\n")
+        f_out.write(str(np.mean(np.array(total_loss))) + "\n")
+        f_out.write("LM Loss\n")
+        f_out.write(str(np.mean(np.array(lm_total_loss))) + "\n")
+        f_out.write("Label Distance\n")
+        f_out.write(str(np.mean(np.array(prediction_distance))) + "\n")
 
 
 if __name__ == "__main__":

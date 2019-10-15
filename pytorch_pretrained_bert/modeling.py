@@ -1263,12 +1263,6 @@ class TemporalModelJoint(BertPreTrainedModel):
 
         self.concat_size = self.num_labels * 2 + self.num_typical_labels
 
-        # self.sat = satnet.SATNet(48, 100, 100).cuda()
-        # self.dur_additional_bits = torch.zeros([1, 9]).float().cuda()
-        # self.dur_is_input_mask = torch.cat((torch.ones(1, 9), torch.zeros([1, 9]), torch.ones([1, 21])), -1).int().cuda()
-        # self.dur_is_input_mask = torch.cat((torch.zeros([1, 9]), torch.ones([1, 39])), -1).int().cuda()
-        # self.dur_is_input_mask = self.dur_is_input_mask.view(self.dur_is_input_mask.size(0), -1)
-
         self.cls = BertOnlyMLMHead(config, self.bert.embeddings.word_embeddings.weight)
         self.apply(self.init_bert_weights)
 
@@ -1283,12 +1277,6 @@ class TemporalModelJoint(BertPreTrainedModel):
         dur_logits = self.softmax(self.dur_classifier(pooled_output)).view(-1, self.num_labels)
         freq_logits = self.softmax(self.freq_classifier(pooled_output)).view(-1, self.num_labels)
         typical_logits = self.softmax(self.typical_classifier(pooled_output)).view(-1, self.num_typical_labels)
-
-        # concat_logits = torch.cat((self.dur_additional_bits.repeat(dur_logits.size(0), 1), freq_logits, dur_logits, typical_logits), -1)
-        # concat_logits = torch.cat((dur_logits, freq_logits, dur_logits, typical_logits), -1)
-        # cur_dur_mask = self.dur_is_input_mask.repeat(dur_logits.size(0), 1)
-        # dur_logits = self.sat(concat_logits, cur_dur_mask)
-        # dur_logits = self.softmax(dur_logits.narrow(1, 0, 9))
 
         cls_logits = self.cls(seq_output)
 
@@ -1310,6 +1298,104 @@ class TemporalModelJoint(BertPreTrainedModel):
         lm_loss_b = self.compute_lm_loss(cls_b, lm_labels_b)
         if lm_loss_a is not None:
             return torch.cat((freq_a, dur_a, typ_a), -1), torch.cat((freq_b, dur_b, typ_b), -1), lm_loss_a + lm_loss_b
+        else:
+            return torch.cat((freq_a, dur_a, typ_a), -1), torch.cat((freq_b, dur_b, typ_b), -1), None
+
+
+class TemporalModelArguments(BertPreTrainedModel):
+    def __init__(self, config):
+        super(TemporalModelArguments, self).__init__(config)
+        self.bert = BertModel(config)
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+
+        self.cls = BertOnlyMLMHead(config, self.bert.embeddings.word_embeddings.weight)
+        self.apply(self.init_bert_weights)
+
+        self.lm_loss_fn = CrossEntropyLoss(ignore_index=-1)
+
+    def compute_lm_loss(self, cls_output, labels):
+        if labels is None:
+            return None
+        lm_loss = self.lm_loss_fn(cls_output.view(-1, 30522), labels.view(-1))
+        return lm_loss
+
+    def forward(self, input_ids, token_type_ids, attention_mask, lm_labels, target_ids_a, target_ids_b):
+        sequence_output, pooled_output = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False)
+        prediction_scores = self.cls(sequence_output)
+        masked_lm_loss = self.lm_loss_fn(prediction_scores.view(-1, self.config.vocab_size), lm_labels.view(-1))
+        ret_cls_a = prediction_scores.gather(1, target_ids_a.view(-1, 1).unsqueeze(2).repeat(1, 1, prediction_scores.size(2)))
+        ret_cls_b = prediction_scores.gather(1, target_ids_b.view(-1, 1).unsqueeze(2).repeat(1, 1, prediction_scores.size(2)))
+
+        return masked_lm_loss, ret_cls_a, ret_cls_b
+
+
+class TemporalModelJointWithLikelihood(BertPreTrainedModel):
+
+    def __init__(self, config, num_labels, num_typical_labels):
+        super(TemporalModelJointWithLikelihood, self).__init__(config)
+        self.num_labels = num_labels
+        self.num_typical_labels = num_typical_labels
+        self.bert = BertModel(config)
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+        self.log_softmax = nn.LogSoftmax(-1)
+        self.softmax = nn.Softmax(-1)
+
+        self.dur_classifier = nn.Linear(config.hidden_size, self.num_labels)
+        self.freq_classifier = nn.Linear(config.hidden_size, self.num_labels)
+        self.typical_classifier = nn.Linear(config.hidden_size, self.num_typical_labels)
+
+        self.likelihood_classifier = nn.Linear(config.hidden_size, 2)
+
+        self.concat_size = self.num_labels * 2 + self.num_typical_labels
+
+        self.cls = BertOnlyMLMHead(config, self.bert.embeddings.word_embeddings.weight)
+        self.apply(self.init_bert_weights)
+
+        self.lm_loss_fn = CrossEntropyLoss(ignore_index=-1)
+
+    def get_single_inference(self, input_ids, token_type_ids, attention_mask, target_ids):
+        seq_output, _ = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False)
+        target_all_output = seq_output.gather(1, target_ids.view(-1, 1).unsqueeze(2).repeat(1, 1, seq_output.size(2)))
+
+        pooled_output = self.dropout(target_all_output)
+
+        dur_logits = self.softmax(self.dur_classifier(pooled_output)).view(-1, self.num_labels)
+        freq_logits = self.softmax(self.freq_classifier(pooled_output)).view(-1, self.num_labels)
+        typical_logits = self.softmax(self.typical_classifier(pooled_output)).view(-1, self.num_typical_labels)
+
+        likelihood_logits = self.likelihood_classifier(seq_output)
+        cls_logits = self.cls(seq_output)
+
+        return freq_logits, dur_logits, typical_logits, cls_logits, likelihood_logits
+
+    def compute_aux_loss(self, cls_output, likelihood_output, lm_labels, likelihood_labels):
+        lm_loss = None
+        if lm_labels is not None:
+            lm_loss = self.lm_loss_fn(cls_output.view(-1, 30522), lm_labels.view(-1))
+        likelihood_loss = None
+        if likelihood_labels is not None:
+            likelihood_loss = self.lm_loss_fn(likelihood_output.view(-1, 2), likelihood_labels.view(-1))
+        if likelihood_loss is not None:
+            if lm_loss is not None:
+                return likelihood_loss + lm_loss
+            else:
+                return lm_loss
+        else:
+            if lm_loss is not None:
+                return lm_loss
+            else:
+                return None
+
+    def forward(self, input_ids_a, token_type_ids_a, attention_mask_a, target_ids_a,
+                input_ids_b, token_type_ids_b, attention_mask_b, target_ids_b, lm_labels_a, lm_labels_b, lh_labels_a, lh_labels_b):
+
+        freq_a, dur_a, typ_a, cls_a, lh_a = self.get_single_inference(input_ids_a, token_type_ids_a, attention_mask_a, target_ids_a)
+        aux_loss_a = self.compute_aux_loss(cls_a, lh_a, lm_labels_a, lh_labels_a)
+        freq_b, dur_b, typ_b, cls_b, lh_b = self.get_single_inference(input_ids_b, token_type_ids_b, attention_mask_b, target_ids_b)
+        aux_loss_b = self.compute_aux_loss(cls_b, lh_b, lm_labels_b, lh_labels_b)
+
+        if aux_loss_a is not None:
+            return torch.cat((freq_a, dur_a, typ_a), -1), torch.cat((freq_b, dur_b, typ_b), -1), aux_loss_a + aux_loss_b
         else:
             return torch.cat((freq_a, dur_a, typ_a), -1), torch.cat((freq_b, dur_b, typ_b), -1), None
 

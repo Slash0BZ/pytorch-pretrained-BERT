@@ -70,7 +70,7 @@ class AllenSRL:
         f_out = jsonlines.open(self.output_path, "w")
         counter = 0
         start_time = time.time()
-        batch_size = 256
+        batch_size = 128
         for i in range(0, len(sentences), batch_size):
             input_map = []
             for j in range(0, batch_size):
@@ -277,18 +277,18 @@ class SecondProcessor:
             f_out.write(" ".join(cur[0]) + "\t" + str(cur[1]) + "\t" + cur[2] + "\t" + " ".join(unique_list[i+1][0]) + "\t" + str(unique_list[i+1][1]) + "\t" + unique_list[i+1][2] + "\tFREQ\n")
 
 
-# srl = AllenSRL("samples/typical/all_eng_srl.jsonl")
-# srl.predict_file("samples/typical/all_raw.txt")
-second_processor = SecondProcessor()
-second_processor.save_to_file("samples/joint_fullsent/freq.srl.pair.all.txt")
+srl = AllenSRL("samples/wikipedia/srl_batch_0.jsonl")
+srl.predict_file("samples/wikipedia/raw_batch_0.txt")
+# second_processor = SecondProcessor()
+# second_processor.save_to_file("samples/joint_fullsent/freq.srl.pair.all.txt")
 
-def insert_duration_data(limit, output_file):
-    import random
-    lines = [x.strip() for x in open("samples/UD_English_finetune/train.srl.pair.formatted.txt").readlines()]
-    random.shuffle(lines)
-    f_out = open(output_file, "w")
-    for line in lines[:limit]:
-        f_out.write("\t".join(line.split("\t")[:-1]) + "\tDUR\n")
-
-
-# insert_duration_data(280000, "samples/pretrain_combine/dur.srl.pair.all.txt")
+# def insert_duration_data(limit, output_file):
+#     import random
+#     lines = [x.strip() for x in open("samples/UD_English_finetune/train.pair.formatted.txt").readlines()]
+#     random.shuffle(lines)
+#     f_out = open(output_file, "w")
+#     for line in lines[:limit]:
+#         f_out.write("\t".join(line.split("\t")[:-1]) + "\tDUR\n")
+#
+#
+# insert_duration_data(320000, "samples/joint_fullsene/dur.srl.pair.all.txt")

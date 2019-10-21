@@ -1302,6 +1302,39 @@ class TemporalModelJoint(BertPreTrainedModel):
             return torch.cat((freq_a, dur_a, typ_a), -1), torch.cat((freq_b, dur_b, typ_b), -1), None
 
 
+class TemporalModelJointNew(BertPreTrainedModel):
+    def __init__(self, config, num_labels=51):
+        super(TemporalModelJointNew, self).__init__(config)
+        self.num_labels = num_labels
+        self.bert = BertModel(config)
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+
+        self.classifier = nn.Linear(config.hidden_size, self.num_labels)
+
+        self.cls = BertOnlyMLMHead(config, self.bert.embeddings.word_embeddings.weight)
+        self.apply(self.init_bert_weights)
+
+        self.lm_loss_fn = CrossEntropyLoss(ignore_index=-1)
+
+    def compute_lm_loss(self, cls_output, labels):
+        if labels is None:
+            return None
+        lm_loss = self.lm_loss_fn(cls_output.view(-1, 30522), labels.view(-1))
+        return lm_loss
+
+    def forward(self, input_ids, token_type_ids, attention_mask, target_ids, lm_labels):
+        seq_output, _ = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False)
+        target_all_output = seq_output.gather(1, target_ids.view(-1, 1).unsqueeze(2).repeat(1, 1, seq_output.size(2)))
+
+        pooled_output = self.dropout(target_all_output)
+        logits = self.classifier(pooled_output)
+
+        cls_logits = self.cls(seq_output)
+        lm_loss = self.compute_lm_loss(cls_logits, lm_labels)
+
+        return logits, lm_loss
+
+
 class TemporalModelArguments(BertPreTrainedModel):
     def __init__(self, config):
         super(TemporalModelArguments, self).__init__(config)

@@ -34,7 +34,7 @@ class AllenSRL:
         f_out = jsonlines.open(self.output_path, "w")
         counter = 0
         start_time = time.time()
-        batch_size = 64
+        batch_size = 256
         for i in range(0, len(sentences), batch_size):
             input_map = []
             for j in range(0, batch_size):
@@ -63,9 +63,11 @@ class AllenSRL:
             lines = [x.strip() for x in f.readlines()]
         new_lines = []
         for l in lines:
-            if len(l.split()) < 128:
-                print(len(l.split()))
-                new_lines.append(l)
+            if len(l.split("\t")) < 3:
+                continue
+            sent = l.split("\t")[1]
+            if len(sent.split()) < 35:
+                new_lines.append(sent)
         self.predict_batch(new_lines)
 
 

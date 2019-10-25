@@ -98,7 +98,7 @@ def produce_random_sentence():
 
 def get_top_perspectives(evidence):
     es = Elasticsearch(['http://macniece.seas.upenn.edu'], port=4010)
-    res = es.search(index="random_sentence_0", body={"query": {"match": {"text": evidence}}}, size=5)
+    res = es.search(index="temporal_qa_srl_verb_new", body={"query": {"match": {"text": evidence}}}, size=5)
     output = []
     for doc in res['hits']['hits']:
         score = doc['_score']
@@ -126,4 +126,4 @@ def create_index():
 
 # produce_random_sentence()
 # create_index()
-get_top_perspectives("John read the word .")
+get_top_perspectives("The court ruled against her landlord.")

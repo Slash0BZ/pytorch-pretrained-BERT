@@ -1309,6 +1309,8 @@ class TemporalModelJointNew(BertPreTrainedModel):
         self.bert = BertModel(config)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
+        self.dense = nn.Linear(config.hidden_size, config.hidden_size)
+        self.activation = nn.Tanh()
         self.classifier = nn.Linear(config.hidden_size, self.num_labels)
 
         self.cls = BertOnlyMLMHead(config, self.bert.embeddings.word_embeddings.weight)
@@ -1326,7 +1328,10 @@ class TemporalModelJointNew(BertPreTrainedModel):
         seq_output, _ = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False)
         target_all_output = seq_output.gather(1, target_ids.view(-1, 1).unsqueeze(2).repeat(1, 1, seq_output.size(2)))
 
-        pooled_output = self.dropout(target_all_output)
+        pooled_output = self.dense(target_all_output)
+        pooled_output = self.activation(pooled_output)
+        pooled_output = self.dropout(pooled_output)
+        # pooled_output = self.dropout(target_all_output)
         logits = self.classifier(pooled_output)
 
         cls_logits = self.cls(seq_output)

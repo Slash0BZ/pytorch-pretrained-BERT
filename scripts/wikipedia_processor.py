@@ -88,18 +88,21 @@ class GigawordExtractor:
             for i, sent in enumerate(doc.sents):
                 sent = str(sent)
                 ap = False
-                for key in self.duration_keys:
-                    if key in sent.lower():
-                        ap = True
-                for key in self.typ_keys:
-                    if key in sent.lower():
-                        ap = True
-                for key in self.additional_keys:
-                    if key in sent.lower():
-                        ap = True
-                for key in self.ordering_keys:
-                    if key in sent.lower():
-                        ap = True
+                # for key in self.duration_keys:
+                #     if key in sent.lower():
+                #         ap = True
+                # for key in self.typ_keys:
+                #     if key in sent.lower():
+                #         ap = True
+                # for key in self.additional_keys:
+                #     if key in sent.lower():
+                #         ap = True
+                # for key in self.ordering_keys:
+                #     if key in sent.lower():
+                #         ap = True
+                r = random.random()
+                if r < 0.01:
+                    ap = True
                 if ap:
                     prev_sent = "NONE"
                     if i > 0:
@@ -245,10 +248,10 @@ class WikipediaExtractor:
 class TokenizationProcessor:
 
     def __init__(self):
-        self.lines = [x.strip() for x in open("samples/wikipedia/raw_collection_randomsent_contextsent.txt").readlines()]
+        self.lines = [x.strip() for x in open("samples/gigaword/raw_collection_randsent_contextsent.txt").readlines()]
         self.nlp = English()
         self.nlp.add_pipe(self.nlp.create_pipe('sentencizer'))
-        self.f_out = open("samples/wikipedia/raw_collection_randomsent_contextsent_tokenized.txt", "w")
+        self.f_out = open("samples/gigaword/raw_collection_randsent_contextsent_tokenized.txt", "w")
         self.process()
 
     def process(self):
@@ -358,7 +361,7 @@ class MultiLingualLinker:
 
 
 # extractor = GigawordExtractor()
-# extractor.process_path("samples/gigaword/all", "samples/gigaword/raw_collection_contextsent.txt")
+# extractor.process_path("samples/gigaword/all", "samples/gigaword/raw_collection_randsent_contextsent.txt")
 # extractor = WikipediaExtractor()
 # extractor.process_path("/shared/wikipedia/processed/enwiki_with_links", "samples/wikipedia/raw_collection_randomsent_contextsent.txt")
 p = TokenizationProcessor()

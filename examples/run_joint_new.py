@@ -361,7 +361,9 @@ def get_soft_labels(orig_label):
         print("Error: should never happen")
         soft_labels = []
 
-    return soft_labels, label_group, label_id
+    real_label_id = np.argmax(np.array(soft_labels))
+
+    return soft_labels, label_group, real_label_id
 
 
 def convert_examples_to_features(examples, max_seq_length, tokenizer):
@@ -406,21 +408,25 @@ def convert_examples_to_features(examples, max_seq_length, tokenizer):
             "TYP": (18, 49),
             "ORD": (49, 51),
         }
+        """COMBINED WEIGHT"""
         adjustment_map = {
-            "DUR": [4.713233420839841, 7.301690261690262, 3.7338844135558715, 1.6619834936704905, 1.6149767530126198, 1.3116141720147714, 0.18030480616765102, 1.926901061478825, 2.9885236690546426],
-            "FREQ": [7.822233025441582, 5.536935076852489, 5.705791962174941, 0.7285308943825651, 1.2195189732706786, 1.747619564823866, 0.17502810109141015, 37.94889937106918, 85.13403880070547],
-            "TYP": [0.910220976923859, 0.900268330694015, 0.9186962934461973, 0.984858796678216, 0.9885148282571795,
-                    1.0179738794304067, 0.8277183961174024, 1.1071555534946984, 1.042599411970191, 1.0915993599512344,
-                    1.1712791876512525, 1.1731591273870745],
+            "DUR": [16.540970625798213, 3.8448873689335374, 1.8235395159973191, 1.7189426938584824, 1.3133984780633436, 0.6898745167472576, 0.3434554135229082, 0.4791514984698619, 2.9429924423175677],
+            "FREQ": [13.185669572993516, 6.121698064248274, 5.332203236597052, 0.33904740552954327, 1.198149333170816, 1.2243396128496549, 0.26337423751216854, 6.271079213184476, 62.116377040547654],
+            "TYP": [15.011903251186517, 2.6310161379285804, 16.128595969787035, 4.748663273334511, 8.70443842712503,
+             126.35847041230507, 1.8558631487460426, 10.990857737475844, 0.3117006033401086, 0.29835544451624,
+             0.29643179679113296, 0.307263298263331, 0.3252442559705793, 0.4985271348537628, 0.4670663883933824,
+             1.4400097382836274, 1.9593478160051412, 1.1165805847529298, 1.2998248540267092, 1.3422531855264204,
+             1.2093635692627283, 1.2316912421572568, 1.921463145242504, 1.61436069314308, 1.7979767275026446,
+             1.7378749460113, 1.6234262768874386, 4.658234627016129, 2.3844200240262516, 4.628852264012146,
+             7.839001245792138],
             "ORD": [1.0, 1.0]
         }
         soft_labels = [0.0] * soft_label_length
+        per_group_soft_label, _, relative_label_id = get_soft_labels(example.label)
         for i in range(dimension_index_map[example.dimension][0], dimension_index_map[example.dimension][1]):
-            soft_labels[i] = get_soft_labels(example.label)[0][i - dimension_index_map[example.dimension][0]]
+            soft_labels[i] = per_group_soft_label[i - dimension_index_map[example.dimension][0]]
 
-        adjustment = [0.0] * soft_label_length
-        for i in range(dimension_index_map[example.dimension][0], dimension_index_map[example.dimension][1]):
-            adjustment[i] = adjustment_map[example.dimension][i - dimension_index_map[example.dimension][0]]
+        adjustment = adjustment_map[example.dimension][relative_label_id]
 
         assert len(soft_labels) == soft_label_length
 
@@ -430,7 +436,7 @@ def convert_examples_to_features(examples, max_seq_length, tokenizer):
                 [str(x) for x in tokens]))
             logger.info("LM label: %s" % " ".join(str(x) for x in lm_labels))
             logger.info("soft_labels: %s" % " ".join(str(x) for x in soft_labels))
-            logger.info("adjustments: %s" % " ".join(str(x) for x in adjustment))
+            logger.info("adjustments: %s" % str(adjustment))
             logger.info("target index: %s" % str(target_idx))
             logger.info("label: %s" % example.label)
 
@@ -471,7 +477,7 @@ def compute_metrics(task_name, preds, labels, additional=None):
         raise KeyError(task_name)
 
 
-def soft_cross_entropy_loss(logits, soft_labels, lm_loss, adjustments=0):
+def soft_cross_entropy_loss(logits, soft_labels, lm_loss, adjustments=None):
 
     logits_softmaxed = torch.cat((
         nn.functional.log_softmax(logits.narrow(1, 0, 9), -1),
@@ -481,7 +487,10 @@ def soft_cross_entropy_loss(logits, soft_labels, lm_loss, adjustments=0):
     ), -1)
 
     loss = -soft_labels * logits_softmaxed
-    loss = torch.sum(loss, -1).mean()
+    loss = torch.sum(loss, -1)
+    if adjustments is not None:
+        loss = loss * adjustments
+    loss = loss.mean()
 
     if lm_loss is not None:
         return loss + lm_loss, loss.item()
@@ -507,6 +516,7 @@ def compute_distance(logits, target):
         "season": [45, 49],
         "ordering": [49, 51]
     }
+    log_distance = [0.0, 1.7781512503836434, 3.556302500767287, 4.936513742478892, 5.781611782493149, 6.413634997198555, 7.498806606935368, 8.498806606935366, 9.498806606935368]
     reverse_map = {}
     for i in range(0, 51):
         for key in logits_range_map:
@@ -514,9 +524,15 @@ def compute_distance(logits, target):
                 reverse_map[i] = key
     result_map = {}
     count_map = {}
+    per_label_map = {}
+    per_label_count_map = {}
     for key in logits_range_map:
         result_map[key] = 0.0
         count_map[key] = 0.0
+    result_map['duration-log'] = 0.0
+    result_map['frequency-log'] = 0.0
+    count_map['duration-log'] = 0.0
+    count_map['frequency-log'] = 0.0
 
     for i in range(0, logits.shape[0]):
         cur_logits = logits[i]
@@ -527,9 +543,23 @@ def compute_distance(logits, target):
         logits_vec = cur_logits[logits_range_map[label_group][0]:logits_range_map[label_group][1]]
         predicted_label_id = np.argmax(logits_vec)
         result_map[label_group] += float(abs(target_label_id - predicted_label_id))
+        if label_group in ["duration", "frequency"]:
+            result_map[label_group + "-log"] += float(abs(log_distance[int(target_label_id)] - log_distance[int(predicted_label_id)]))
+            count_map[label_group + "-log"] += 1.0
         count_map[label_group] += 1.0
 
-    return result_map, count_map
+        label_key = label_group + "-" + str(target_label_id)
+        if label_key not in per_label_map:
+            per_label_map[label_key] = 0.0
+            per_label_count_map[label_key] = 0.0
+        if label_group in ["duration", "frequency"]:
+            per_label_map[label_key] += float(abs(log_distance[int(target_label_id)] - log_distance[int(predicted_label_id)]))
+        else:
+            per_label_map[label_key] += float(abs(target_label_id - predicted_label_id))
+
+        per_label_count_map[label_key] += 1.0
+
+    return result_map, count_map, per_label_map, per_label_count_map
 
 
 def main():
@@ -893,6 +923,8 @@ def main():
         lm_total_loss = []
         prediction_distance_map = {}
         prediction_count_map = {}
+        per_label_distance_map = {}
+        per_label_count_map = {}
         for batch in tqdm(eval_dataloader, desc="Evaluating"):
             batch = tuple(t.to(device) for t in batch)
             input_ids, input_mask, segment_ids, lm_labels, target_ids, soft_labels = batch
@@ -906,6 +938,8 @@ def main():
                 )
             prediction_distance_map = combine_map(prediction_distance_map, compute_distance(logits.view(-1, 51).cpu().numpy(), soft_labels.cpu().numpy())[0])
             prediction_count_map = combine_map(prediction_count_map, compute_distance(logits.view(-1, 51).cpu().numpy(), soft_labels.cpu().numpy())[1])
+            per_label_distance_map = combine_map(per_label_distance_map, compute_distance(logits.view(-1, 51).cpu().numpy(), soft_labels.cpu().numpy())[2])
+            per_label_count_map = combine_map(per_label_count_map, compute_distance(logits.view(-1, 51).cpu().numpy(), soft_labels.cpu().numpy())[3])
             lm_total_loss.append(lm_loss.item())
             total_loss.append(loss)
 
@@ -917,6 +951,20 @@ def main():
         for key in prediction_distance_map:
             f_out.write(key + "\n")
             f_out.write(str(prediction_distance_map[key] / prediction_count_map[key]) + "\n")
+
+        merge_map = {}
+        merge_count_map = {}
+        for key in per_label_count_map:
+            group = key.split("-")[0]
+            if group not in merge_map:
+                merge_map[group] = 0.0
+                merge_count_map[group] = 0.0
+            merge_map[group] += float(per_label_distance_map[key] / per_label_count_map[key])
+            merge_count_map[group] += 1.0
+        f_out.write("Macro Log Distance\n")
+        for key in merge_count_map:
+            f_out.write(key + "\n")
+            f_out.write(str(merge_map[key] / merge_count_map[key]) + "\n")
 
 
 if __name__ == "__main__":

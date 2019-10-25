@@ -8,15 +8,15 @@ import copy
 class TmpArgProcessor:
 
     def __init__(self):
-        self.output_path = "samples/wikipedia/tmparg_collection_srl_skeleton_with_prev_and_next.txt"
+        self.output_path = "samples/gigaword/tmparg_collection_with_prev_and_next.txt"
         self.f_out = open(self.output_path, "w")
-        self.root_path = "samples/wikipedia"
+        self.root_path = "samples/gigaword"
         self.context_table = {}
         self.build_context_table()
         self.process()
 
     def build_context_table(self):
-        lines = [x.strip() for x in open("samples/wikipedia/raw_collection_contextsent_tokenized.txt").readlines()]
+        lines = [x.strip() for x in open("samples/gigaword/raw_collection_contextsent_tokenized.txt").readlines()]
         print("Loaded all lines")
         for i, line in enumerate(lines):
             if i % 1000000 == 0:
@@ -80,18 +80,10 @@ class TmpArgProcessor:
                     verb_pos = self.get_verb_pos(verb['tags'])
                     left_sent, right_sent = self.context_table[key]
                     for tmp_start, tmp_end in tmps:
-                        """CHANGING TO SRL ONLY!"""
-                        srl_tokens, srl_verb_pos, srl_tmp_start, srl_tmp_end = self.get_stripped(obj['words'], verb['tags'], verb_pos, tmp_start, tmp_end)
-                        # if srl_tmp_end - srl_tmp_start != tmp_end - tmp_start:
-                        #     print(obj['words'])
-                        #     print(verb['tags'])
-                        #     print(str(verb_pos) + "\t" + str(tmp_start) + "\t" + str(tmp_end))
-                        #     print()
-                        #     print(srl_tokens)
-                        #     print(str(srl_verb_pos) + "\t" + str(srl_tmp_start) + "\t" + str(srl_tmp_end))
-                        #     print("--------------------")
-                        self.f_out.write(" ".join(srl_tokens) + "\t" + left_sent + "\t" + right_sent + "\t" + str(srl_verb_pos) + "\t" + str(srl_tmp_start) + "\t" + str(srl_tmp_end) + "\n")
-                        # self.f_out.write(" ".join(obj['words']) + "\t" + left_sent + "\t" + right_sent + "\t" + str(verb_pos) + "\t" + str(tmp_start) + "\t" + str(tmp_end) + "\n")
+                        # """CHANGING TO SRL ONLY!"""
+                        # srl_tokens, srl_verb_pos, srl_tmp_start, srl_tmp_end = self.get_stripped(obj['words'], verb['tags'], verb_pos, tmp_start, tmp_end)
+                        # self.f_out.write(" ".join(srl_tokens) + "\t" + left_sent + "\t" + right_sent + "\t" + str(srl_verb_pos) + "\t" + str(srl_tmp_start) + "\t" + str(srl_tmp_end) + "\n")
+                        self.f_out.write(" ".join(obj['words']) + "\t" + left_sent + "\t" + right_sent + "\t" + str(verb_pos) + "\t" + str(tmp_start) + "\t" + str(tmp_end) + "\n")
 
     def process(self):
         for dirName, subdirList, fileList in os.walk(self.root_path):
@@ -103,11 +95,15 @@ class TmpArgProcessor:
 
 class TmpArgDimensionFilter:
     def __init__(self):
-        self.file_path = "samples/wikipedia/tmparg_collection_srl_skeleton_with_prev_and_next.txt"
-        self.lines = [x.strip() for x in open(self.file_path).readlines()]
-        self.rand_file_path = "samples/wikipedia/raw_collection_randomsent_contextsent_tokenized.txt"
+        self.file_path = "samples/gigaword/tmparg_collection_with_prev_and_next.txt"
+        self.lines = list(set([x.strip() for x in open(self.file_path).readlines()]))
+        # self.srl_file_path = "samples/wikipedia/tmparg_collection_srl_skeleton_with_prev_and_next.txt"
+        # self.srl_lines = [x.strip() for x in open(self.srl_file_path).readlines()]
+        self.rand_file_path = "samples/gigaword/raw_collection_randsent_contextsent_tokenized.txt"
         self.rand_lines = [x.strip() for x in open(self.rand_file_path).readlines()]
-        self.output_path = "samples/wikipedia_joint_singlesent_srl"
+        self.output_path = "samples/gigaword/twosent"
+        # self.output_path_srl = "samples/wikipedia_fixed/onesent_srl"
+        self.output_path_singlesent = "samples/gigaword/onesent"
         self.value_map = {
             "second": 1.0,
             "seconds": 1.0,
@@ -228,7 +224,10 @@ class TmpArgDimensionFilter:
         if unit == "":
             return "NO_UNIT_FOUND"
         ret_str = str(num) + " " + unit
-        if tmparg_tokens[0] in ["for", "over"] and "second time" not in " ".join(tmparg_tokens):
+        if "for a second" in " ".join(tmparg_tokens):
+            if tmparg_tokens[-1] != "second":
+                return "NO_UNIT_FOUND"
+        if tmparg_tokens[0] in ["for", "over"] and "second time" not in " ".join(tmparg_tokens) and "for the second" not in " ".join(tmparg_tokens):
             return ret_str
         return "FOUND_UNIT_BUT_NOT_DURATION"
 
@@ -376,59 +375,84 @@ class TmpArgDimensionFilter:
         return "NO_ORDERING_FOUND"
 
     def process(self):
-        duration_strings = set()
-        frequency_strings = set()
-        typical_strings = set()
-        ordering_strings = set()
-        for line in self.lines:
+        duration_strings = []
+        frequency_strings = []
+        typical_strings = []
+        ordering_strings = []
+        for i, line in enumerate(self.lines):
             group = line.split("\t")
             sent = group[0]
             tokens_lower = sent.lower().split()
+            # tokens_srl_lower = self.srl_lines[i].split("\t")[0].lower().split()
             prev_sent = group[1].lower()
             next_sent = group[2].lower()
             verb_pos = int(group[3])
-            # if verb_pos == -1:
-            #     print(tokens_lower)
-            #     print(verb_pos)
-            #     print(tmp_start)
-            #     print(tmp_end)
             tmp_start = int(group[4])
             tmp_end = int(group[5])
+
+            # verb_pos_srl = int(self.srl_lines[i].split("\t")[3])
+            # tmp_start_srl = int(self.srl_lines[i].split("\t")[4])
+            # tmp_end_srl = int(self.srl_lines[i].split("\t")[5])
 
             duration_check = self.check_duration_sentences(tokens_lower[tmp_start:tmp_end])
             frequency_check = self.check_frequency_sentences(tokens_lower[tmp_start:tmp_end])
             typical_check, typ_group = self.check_typical_sentences(tokens_lower[tmp_start:tmp_end])
             ordering_check = self.check_ordering_sentences(tokens_lower, tmp_start, tmp_end)
+
             no_tmp_token = []
             new_verb_pos = -1
-            for i, t in enumerate(tokens_lower):
-                if tmp_end > i >= tmp_start:
+            for j, t in enumerate(tokens_lower):
+                if tmp_end > j >= tmp_start:
                     continue
                 no_tmp_token.append(t)
-                if i == verb_pos:
+                if j == verb_pos:
                     new_verb_pos = len(no_tmp_token) - 1
             if new_verb_pos < 0:
                 continue
-            """CHANGED THIS!!!"""
-            # new_verb_pos += 2 + len(prev_sent.split())
-            new_verb_pos += 1
+
+            # no_tmp_token_srl = []
+            # new_verb_pos_srl = -1
+            # for j, t in enumerate(tokens_srl_lower):
+            #     if tmp_end_srl > j >= tmp_start_srl:
+            #         continue
+            #     no_tmp_token_srl.append(t)
+            #     if j == verb_pos_srl:
+            #         new_verb_pos_srl = len(no_tmp_token_srl) - 1
+
+
+            twosent_verb_pos = 2 + len(prev_sent.split()) + new_verb_pos
+            onesent_verb_pos = 1 + new_verb_pos
+            # onesent_verb_pos_srl = 1 + new_verb_pos_srl
 
             if duration_check != "NO_UNIT_FOUND" and duration_check != "FOUND_UNIT_BUT_NOT_DURATION":
-                # duration_strings.add("[CLS] " + prev_sent + " [SEP] " + " ".join(no_tmp_token) + " [SEP]\t" + str(new_verb_pos) + "\t" + duration_check + "\t" + "DUR" + "\n")
-                duration_strings.add("[CLS] " + " ".join(no_tmp_token) + " [SEP]\t" + str(new_verb_pos) + "\t" + duration_check + "\t" + "DUR" + "\n")
+                duration_strings.append([
+                    "[CLS] " + prev_sent + " [SEP] " + " ".join(no_tmp_token) + " [SEP]\t" + str(twosent_verb_pos) + "\t" + duration_check + "\t" + "DUR" + "\n",
+                    "[CLS] " + " ".join(no_tmp_token) + " [SEP]\t" + str(onesent_verb_pos) + "\t" + duration_check + "\t" + "DUR" + "\n",
+                    # "[CLS] " + " ".join(no_tmp_token_srl) + " [SEP]\t" + str(onesent_verb_pos_srl) + "\t" + duration_check + "\t" + "DUR" + "\n",
+                ])
             if frequency_check != "NO_UNIT_FOUND" and frequency_check != "FOUND_UNIT_BUT_NOT_FREQUENCY":
-                # frequency_strings.add("[CLS] " + prev_sent + " [SEP] " + " ".join(no_tmp_token) + " [SEP]\t" + str(new_verb_pos) + "\t" + frequency_check + "\t" + "FREQ" + "\n")
-                frequency_strings.add("[CLS] " +  " ".join(no_tmp_token) + " [SEP]\t" + str(new_verb_pos) + "\t" + frequency_check + "\t" + "FREQ" + "\n")
+                frequency_strings.append([
+                    "[CLS] " + prev_sent + " [SEP] " + " ".join(no_tmp_token) + " [SEP]\t" + str(twosent_verb_pos) + "\t" + frequency_check + "\t" + "FREQ" + "\n",
+                    "[CLS] " + " ".join(no_tmp_token) + " [SEP]\t" + str(onesent_verb_pos) + "\t" + frequency_check + "\t" + "FREQ" + "\n",
+                    # "[CLS] " + " ".join(no_tmp_token_srl) + " [SEP]\t" + str(onesent_verb_pos_srl) + "\t" + frequency_check + "\t" + "FREQ" + "\n",
+                ])
             if typical_check != "NO_TYPICAL_FOUND":
                 """SAMPLING!"""
                 r = random.random()
                 if r < 0.1:
-                    # typical_strings.add("[CLS] " + prev_sent + " [SEP] " + " ".join(no_tmp_token) + " [SEP]\t" + str(new_verb_pos) + "\t" + typical_check + "\t" + "TYP" + "\n")
-                    typical_strings.add("[CLS] " + " ".join(no_tmp_token) + " [SEP]\t" + str(new_verb_pos) + "\t" + typical_check + "\t" + "TYP" + "\n")
+                    typical_strings.append([
+                        "[CLS] " + prev_sent + " [SEP] " + " ".join(no_tmp_token) + " [SEP]\t" + str(twosent_verb_pos) + "\t" + typical_check + "\t" + "TYP" + "\n",
+                        "[CLS] " + " ".join(no_tmp_token) + " [SEP]\t" + str(onesent_verb_pos) + "\t" + typical_check + "\t" + "TYP" + "\n",
+                        # "[CLS] " + " ".join(no_tmp_token_srl) + " [SEP]\t" + str(onesent_verb_pos_srl) + "\t" + typical_check + "\t" + "TYP" + "\n",
+                    ])
             if ordering_check != "NO_ORDERING_FOUND":
-                ordering_strings.add("[CLS] " + prev_sent + " [SEP] " + " ".join(no_tmp_token) + " [SEP]\t" + str(0) + "\t" + "yes" + "\t" + "ORD" + "\n")
+                ordering_strings.append([
+                    "[CLS] " + prev_sent + " [SEP] " + " ".join(no_tmp_token) + " [SEP]\t" + str(0) + "\t" + "yes" + "\t" + "ORD" + "\n",
+                    "[CLS] " + prev_sent + " [SEP] " + " ".join(no_tmp_token) + " [SEP]\t" + str(0) + "\t" + "yes" + "\t" + "ORD" + "\n",
+                    "[CLS] " + prev_sent + " [SEP] " + " ".join(no_tmp_token) + " [SEP]\t" + str(0) + "\t" + "yes" + "\t" + "ORD" + "\n",
+                ])
 
-        ordering_strings_neg = set()
+        ordering_strings_neg = []
         while len(ordering_strings_neg) < len(ordering_strings):
             rand_line = random.choice(self.rand_lines)
             if len(rand_line.split("\t")) < 3:
@@ -437,13 +461,12 @@ class TmpArgDimensionFilter:
             prev = rand_line.split("\t")[start_idx].lower()
             next = rand_line.split("\t")[start_idx+1].lower()
             if prev != "NONE" and next != "NONE":
-                ordering_strings_neg.add("[CLS] " + prev + " [SEP] " + next + "[SEP] \t" + str(0) + "\t" + "no" + "\t" + "ORD" + "\n")
+                ordering_strings_neg.append([
+                    "[CLS] " + prev + " [SEP] " + next + " [SEP] \t" + str(0) + "\t" + "no" + "\t" + "ORD" + "\n",
+                    "[CLS] " + prev + " [SEP] " + next + " [SEP] \t" + str(0) + "\t" + "no" + "\t" + "ORD" + "\n",
+                    "[CLS] " + prev + " [SEP] " + next + " [SEP] \t" + str(0) + "\t" + "no" + "\t" + "ORD" + "\n",
+                ])
 
-        duration_strings = list(duration_strings)
-        frequency_strings = list(frequency_strings)
-        typical_strings = list(typical_strings)
-        ordering_strings = list(ordering_strings)
-        ordering_strings_neg = list(ordering_strings_neg)
         random.shuffle(duration_strings)
         random.shuffle(frequency_strings)
         random.shuffle(typical_strings)
@@ -453,14 +476,19 @@ class TmpArgDimensionFilter:
         splits = [0.89, 0.9, 1.0]
         splits_name = ["train", "dev", "test"]
         data_lists = [duration_strings, frequency_strings, typical_strings, ordering_strings, ordering_strings_neg]
+        # data_lists = [duration_strings, frequency_strings, typical_strings]
         prev_split = 0.0
         for i, s in enumerate(splits):
             f_out = open(self.output_path + "/" + splits_name[i] + ".formatted.txt", "w")
+            f_out_onesent = open(self.output_path_singlesent + "/" + splits_name[i] + ".formatted.txt", "w")
+            # f_out_onesent_srl = open(self.output_path_srl + "/" + splits_name[i] + ".formatted.txt", "w")
             for data_list in data_lists:
                 start_idx = int(len(data_list) * prev_split)
                 end_idx = int(len(data_list) * s)
                 for item in data_list[start_idx:end_idx]:
-                    f_out.write(item)
+                    f_out.write(item[0])
+                    f_out_onesent.write(item[1])
+                    # f_out_onesent_srl.write(item[2])
             prev_split = s
 
 
@@ -630,11 +658,14 @@ class TmpArgFilter:
 
 
 class Randomizer:
-    def __init__(self):
-        lines = [x.strip() for x in open("samples/wikipedia_joint/dev.formatted.txt").readlines()]
+    def __init__(self, fname, ratio=1.0):
+        lines = [x.strip() for x in open(fname).readlines()]
+        print(len(lines))
         random.shuffle(lines)
-        f_out = open("samples/wikipedia_joint/dev.formatted.txt", "w")
-        for l in lines:
+        f_out = open(fname, "w")
+        write_len = (int(len(lines) * ratio))
+        print(write_len)
+        for l in lines[:write_len]:
             f_out.write(l + "\n")
         # f_out_train = open("samples/wikipedia_tmparg_full/train.formatted.txt", "w")
         # f_out_test = open("samples/wikipedia_tmparg_full/test.formatted.txt", "w")
@@ -645,15 +676,26 @@ class Randomizer:
 
 
 def visualize():
-    lines = [x.strip() for x in open("samples/wikipedia/tmparg_index.txt").readlines()]
-    for line in lines[:100]:
-        tokens = line.split("\t")[0].split()
-        tokens[int(line.split("\t")[1])] = "[[" + tokens[int(line.split("\t")[1])] + "]]"
-        print(" ".join(tokens))
+    lines = [x.strip() for x in open("samples/gigaword/twosent/dev.formatted.txt").readlines()]
+    cate_instances = {}
+    for line in lines:
+        t = line.split("\t")[-1]
+        if t not in cate_instances:
+            cate_instances[t] = []
+        cate_instances[t].append(line)
+
+    for t in cate_instances:
+        random.shuffle(cate_instances[t])
+        print(t)
+        for line in cate_instances[t][:100]:
+            tokens = line.split("\t")[0].split()
+            tokens[int(line.split("\t")[1])] = "[[" + tokens[int(line.split("\t")[1])] + "]]"
+            print(" ".join(tokens))
+            print(line.split("\t")[-2])
 
 
-p = TmpArgProcessor()
+# p = TmpArgProcessor()
 p = TmpArgDimensionFilter()
 # f = TmpArgFilter()
 # visualize()
-# r = Randomizer()
+# r = Randomizer("samples/wikipedia_joint/test.formatted.txt", 0.3)

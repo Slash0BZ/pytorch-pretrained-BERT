@@ -126,4 +126,5 @@ def create_index():
 
 # produce_random_sentence()
 # create_index()
-get_top_perspectives("The court ruled against her landlord.")
+get_top_perspectives("He started making money.")
+

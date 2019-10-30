@@ -5,6 +5,230 @@ from word2number import w2n
 import copy
 
 
+class AdditionalPatternProcessor:
+
+    def __init__(self):
+        # self.output_path = "samples/gigaword/tmparg_collection_with_prev_and_next.txt"
+        # self.f_out = open(self.output_path, "w")
+        self.root_path = "samples/gigaword"
+        self.context_table = {}
+        # self.build_context_table()
+        self.value_map = {
+            "second": 1.0,
+            "seconds": 1.0,
+            "minute": 60.0,
+            "minutes": 60.0,
+            "hour": 60.0 * 60.0,
+            "hours": 60.0 * 60.0,
+            "day": 24.0 * 60.0 * 60.0,
+            "days": 24.0 * 60.0 * 60.0,
+            "week": 7.0 * 24.0 * 60.0 * 60.0,
+            "weeks": 7.0 * 24.0 * 60.0 * 60.0,
+            "month": 30.0 * 24.0 * 60.0 * 60.0,
+            "months": 30.0 * 24.0 * 60.0 * 60.0,
+            "year": 365.0 * 24.0 * 60.0 * 60.0,
+            "years": 365.0 * 24.0 * 60.0 * 60.0,
+            "decade": 10.0 * 365.0 * 24.0 * 60.0 * 60.0,
+            "decades": 10.0 * 365.0 * 24.0 * 60.0 * 60.0,
+            "century": 100.0 * 365.0 * 24.0 * 60.0 * 60.0,
+            "centuries": 100.0 * 365.0 * 24.0 * 60.0 * 60.0,
+            "dawn": [1, 0],
+            "morning": [1, 1],
+            "noon": [1, 2],
+            "afternoon": [1, 3],
+            "evening": [1, 4],
+            "dusk": [1, 5],
+            "night": [1, 6],
+            "midnight": [1, 7],
+        }
+        self.keywords = {
+            "dawns": [1, 0],
+            "mornings": [1, 1],
+            "noons": [1, 2],
+            "afternoons": [1, 3],
+            "evenings": [1, 4],
+            "dusks": [1, 5],
+            "nights": [1, 6],
+            "midnights": [1, 7],
+            "dawn": [1, 0],
+            "morning": [1, 1],
+            "noon": [1, 2],
+            "afternoon": [1, 3],
+            "evening": [1, 4],
+            "dusk": [1, 5],
+            "night": [1, 6],
+            "midnight": [1, 7],
+            "monday": [2, 0],
+            "tuesday": [2, 1],
+            "wednesday": [2, 2],
+            "thursday": [2, 3],
+            "friday": [2, 4],
+            "saturday": [2, 5],
+            "sunday": [2, 6],
+            "mondays": [2, 0],
+            "tuesdays": [2, 1],
+            "wednesdays": [2, 2],
+            "thursdays": [2, 3],
+            "fridays": [2, 4],
+            "saturdays": [2, 5],
+            "sundays": [2, 6],
+            "january": [3, 0],
+            "february": [3, 1],
+            "march": [3, 2],
+            "april": [3, 3],
+            "may": [3, 4],
+            "june": [3, 5],
+            "july": [3, 6],
+            "august": [3, 7],
+            "september": [3, 8],
+            "october": [3, 9],
+            "november": [3, 10],
+            "december": [3, 11],
+            "januarys": [3, 0],
+            "januaries": [3, 0],
+            "februarys": [3, 1],
+            "februaries": [3, 1],
+            "marches": [3, 2],
+            "marchs": [3, 2],
+            "aprils": [3, 3],
+            "mays": [3, 4],
+            "junes": [3, 5],
+            "julys": [3, 6],
+            "julies": [3, 6],
+            "augusts": [3, 7],
+            "septembers": [3, 8],
+            "octobers": [3, 9],
+            "novembers": [3, 10],
+            "decembers": [3, 11],
+            "springs": [4, 0],
+            "summers": [4, 1],
+            "autumns": [4, 2],
+            "falls": [4, 2],
+            "winters": [4, 3],
+            "spring": [4, 0],
+            "summer": [4, 1],
+            "autumn": [4, 2],
+            "fall": [4, 2],
+            "winter": [4, 3],
+        }
+        self.process()
+
+    def build_context_table(self):
+        lines = [x.strip() for x in open("samples/gigaword/raw_collection_contextsent_tokenized.txt").readlines()]
+        print("Loaded all lines")
+        for i, line in enumerate(lines):
+            if i % 1000000 == 0:
+                print("Added " + str(i) + " sentences to context table.")
+            key = line.split("\t")[1].replace(" ", "")
+            if len(line.split("\t")) < 3:
+                continue
+            self.context_table[key] = (line.split("\t")[0], line.split("\t")[2])
+        print("Finished building context table")
+
+    def get_arg1_range(self, tags):
+        rets = []
+        start = -1
+        end = -1
+        for i, t in enumerate(tags):
+            if t == "B-ARG1":
+                if start > -1:
+                    rets.append((start, end))
+                start = i
+                end = i + 1
+            if t == "I-ARG1":
+                end += 1
+        if start > -1:
+            rets.append((start, end))
+        return rets
+
+    def get_tmp_arg_range(self, tags):
+        rets = []
+        start = -1
+        end = -1
+        for i, t in enumerate(tags):
+            if t == "B-ARGM-TMP":
+                if start > -1:
+                    rets.append((start, end))
+                start = i
+                end = i + 1
+            if t == "I-ARGM-TMP":
+                end += 1
+        if start > -1:
+            rets.append((start, end))
+        return rets
+
+    def get_verb_pos(self, tags):
+        for i, t in enumerate(tags):
+            if t == "B-V":
+                return i
+        return -1
+
+    def get_stripped(self, tokens, tags, verb_pos, tmp_start, tmp_end):
+        new_tokens = []
+        new_verb_pos = -1
+        new_tmp_start = -1
+        new_tmp_end = -1
+        for i in range(0, len(tokens)):
+            if tags[i] != "O":
+                new_tokens.append(tokens[i])
+            if i == verb_pos:
+                new_verb_pos = len(new_tokens) - 1
+            if i == tmp_start:
+                new_tmp_start = len(new_tokens) - 1
+            if i == tmp_end - 1:
+                new_tmp_end = len(new_tokens)
+        return new_tokens, new_verb_pos, new_tmp_start, new_tmp_end
+
+    def process_single_file(self, file_name):
+        lines = [x.strip() for x in open(file_name).readlines()]
+        reader = jsonlines.Reader(lines)
+        counter = 0
+        for obj_list in reader:
+            for obj in obj_list:
+                key = "".join(obj['words'])
+                # if key not in self.context_table:
+                #     continue
+                valid = False
+                verb_pos_final = -1
+                tmp_string = ""
+                for verb in obj['verbs']:
+                    arg1s = self.get_arg1_range(verb['tags'])
+                    tmps = self.get_tmp_arg_range(verb['tags'])
+                    verb_pos = self.get_verb_pos(verb['tags'])
+                    tokens = obj['words']
+                    for tmp_start, tmp_end in tmps:
+                        if tokens[tmp_start] in ["for", "over"]:
+                            for i, t in enumerate(tokens[tmp_start:tmp_end]):
+                                if t.lower() in self.keywords and tokens[tmp_start + i - 1].lower() in ["entire", "whole", "all"]:
+                                    valid = True
+                                    verb_pos_final = verb_pos
+                                    tmp_string = " ".join(tokens[tmp_start:tmp_end])
+                                    break
+                #     if verb in ['spends', "spend", "spent", "spending"]:
+                #         for arg_start, arg_end in arg1s:
+                #             for i in range(arg_start, arg_end):
+                #                 t = obj['words'][i].lower()
+                #                 if t in self.value_map:
+                #                     valid = True
+                #                     verb_pos_final = verb_pos
+                if valid:
+                    tokens = obj['words']
+                    tokens[verb_pos_final] = "[[" + tokens[verb_pos_final] + "]]"
+                    counter += 1
+                    print(" ".join(tokens))
+                    print(tmp_string)
+        return counter
+
+    def process(self):
+        total_count = 0
+        for dirName, subdirList, fileList in os.walk(self.root_path):
+            for fname in fileList:
+                if fname.startswith("srl"):
+                    total_count += self.process_single_file(self.root_path + "/" + fname)
+                    print("Finished " + fname)
+        print(total_count)
+
+
 class TmpArgProcessor:
 
     def __init__(self):
@@ -101,9 +325,9 @@ class TmpArgDimensionFilter:
         # self.srl_lines = [x.strip() for x in open(self.srl_file_path).readlines()]
         self.rand_file_path = "samples/gigaword/raw_collection_randsent_contextsent_tokenized.txt"
         self.rand_lines = [x.strip() for x in open(self.rand_file_path).readlines()]
-        self.output_path = "samples/gigaword/twosent"
+        self.output_path = "samples/gigaword/twosent_small"
         # self.output_path_srl = "samples/wikipedia_fixed/onesent_srl"
-        self.output_path_singlesent = "samples/gigaword/onesent"
+        self.output_path_singlesent = "samples/gigaword/onesent_small"
         self.value_map = {
             "second": 1.0,
             "seconds": 1.0,
@@ -399,6 +623,10 @@ class TmpArgDimensionFilter:
             typical_check, typ_group = self.check_typical_sentences(tokens_lower[tmp_start:tmp_end])
             ordering_check = self.check_ordering_sentences(tokens_lower, tmp_start, tmp_end)
 
+            """IF FREQ, NO DUR"""
+            if frequency_check != "FOUND_UNIT_BUT_NOT_FREQUENCY" and frequency_check != "NO_UNIT_FOUND":
+                duration_check = "FOUND_UNIT_BUT_NOT_DURATION"
+
             no_tmp_token = []
             new_verb_pos = -1
             for j, t in enumerate(tokens_lower):
@@ -439,7 +667,10 @@ class TmpArgDimensionFilter:
             if typical_check != "NO_TYPICAL_FOUND":
                 """SAMPLING!"""
                 r = random.random()
-                if r < 0.1:
+                sample_map = {
+                    1: 2.0, 2: 0.1, 3: 0.25, 4: 2.0
+                }
+                if r < sample_map[typ_group]:
                     typical_strings.append([
                         "[CLS] " + prev_sent + " [SEP] " + " ".join(no_tmp_token) + " [SEP]\t" + str(twosent_verb_pos) + "\t" + typical_check + "\t" + "TYP" + "\n",
                         "[CLS] " + " ".join(no_tmp_token) + " [SEP]\t" + str(onesent_verb_pos) + "\t" + typical_check + "\t" + "TYP" + "\n",
@@ -473,7 +704,9 @@ class TmpArgDimensionFilter:
         random.shuffle(ordering_strings)
         random.shuffle(ordering_strings_neg)
 
-        splits = [0.89, 0.9, 1.0]
+        # splits = [0.89, 0.9, 1.0]
+        """SMALL SPLIT"""
+        splits = [0.39, 0.4, 1.0]
         splits_name = ["train", "dev", "test"]
         data_lists = [duration_strings, frequency_strings, typical_strings, ordering_strings, ordering_strings_neg]
         # data_lists = [duration_strings, frequency_strings, typical_strings]
@@ -676,7 +909,7 @@ class Randomizer:
 
 
 def visualize():
-    lines = [x.strip() for x in open("samples/gigaword/twosent/dev.formatted.txt").readlines()]
+    lines = [x.strip() for x in open("samples/gigaword/twosent/train.formatted.txt").readlines()]
     cate_instances = {}
     for line in lines:
         t = line.split("\t")[-1]
@@ -686,14 +919,13 @@ def visualize():
 
     for t in cate_instances:
         random.shuffle(cate_instances[t])
-        print(t)
-        for line in cate_instances[t][:100]:
+        for line in cate_instances[t][:100000000000]:
             tokens = line.split("\t")[0].split()
             tokens[int(line.split("\t")[1])] = "[[" + tokens[int(line.split("\t")[1])] + "]]"
-            print(" ".join(tokens))
-            print(line.split("\t")[-2])
+            print(" ".join(tokens) + '\t' + line.split("\t")[1] + "\t" + line.split("\t")[-2] + "\t" + t)
 
 
+# p = AdditionalPatternProcessor()
 # p = TmpArgProcessor()
 p = TmpArgDimensionFilter()
 # f = TmpArgFilter()

@@ -416,8 +416,12 @@ class UDReader:
             label_2 = int(groups[15])
             if key_name not in self.data:
                 self.data[key_name] = []
-            self.data[key_name].append([self.sentences[key_name][sentence_index_1], token_index_1, label_1])
-            self.data[key_name].append([self.sentences[key_name][sentence_index_2], token_index_2, label_2])
+            tokens_1 = ["[CLS]"] + self.sentences[key_name][sentence_index_1 - 1] + ["[SEP]"] + self.sentences[key_name][sentence_index_1] + ["[SEP]"]
+            token_index_1 += 2 + len(self.sentences[key_name][sentence_index_1 - 1])
+            tokens_2 = ["[CLS]"] + self.sentences[key_name][sentence_index_2 - 1] + ["[SEP]"] + self.sentences[key_name][sentence_index_2] + ["[SEP]"]
+            token_index_2 += 2 + len(self.sentences[key_name][sentence_index_2 - 1])
+            self.data[key_name].append([tokens_1, token_index_1, label_1])
+            self.data[key_name].append([tokens_2, token_index_2, label_2])
 
         for key in self.data:
             for d in self.data[key]:
@@ -433,9 +437,9 @@ class UDReader:
                 """
                 Warning: Skipping labels, not a fair comparison
                 """
-                # if label in [0, 8, 9, 10]:
-                #    continue
-                f.write(" ".join(d[0]) + "\t" + str(d[1]) + "\t1 " + unit_list[label] + "\t-1\t-1\t-1\t-1\t-1\t-1\n")
+                if label in [0, 10]:
+                   continue
+                f.write(" ".join(d[0]) + "\t" + str(d[1]) + "\t1 " + unit_list[label] + "\tDUR\n")
 
 
 class Evaluator:
@@ -1457,8 +1461,8 @@ class HTMLFormatter:
 #                     "predictions/bert_udst_finetune_classification.txt")
 # eval_bert_pair_acc()
 # train_and_eval()
-# reader = UDReader("samples/UD_English")
-# reader.save_to_file("samples/UD_English_untouched")
+reader = UDReader("samples/UD_English")
+reader.save_to_file("samples/UD_English_seq")
 # eval_bert_custom()
 # train_and_eval_bert_on_udst()
 # convert_prob_file_pair("predictions/bert_combine_test_combine_model_2.txt", "samples/combine_test/test.formatted.txt", "samples/combine_test/test.visualize.txt")
@@ -1475,29 +1479,29 @@ class HTMLFormatter:
 # eval_combined_pair_data("samples/combine_test/test.formatted.txt", "bert_combine_02rel_02lm/bert_logits.txt", optimize=False)
 # eval_combined_pair_data("samples/combine_test/test.formatted.txt", "bert_combine_04rel_04lm/bert_logits.txt", optimize=False)
 
-optimize = False
-postfix = ""
-test_file = "samples/UD_English_SRL_9label_small/test.formatted.txt"
-print("Vanilla")
-eval_combined_pair_data(test_file, "bert_udst_vanilla" + postfix + "/bert_logits.txt", optimize=optimize)
-print("Vanilla + LM")
-eval_combined_pair_data(test_file, "bert_udst_lm" + postfix + "/bert_logits.txt", optimize=optimize)
-# print("Joint Soft Loss")
-# eval_combined_pair_data(test_file, "bert_udst_joint_softloss" + postfix + "/bert_logits.txt", optimize=optimize)
-# print("Joint Soft Loss 0.06 Prob LM")
-# eval_combined_pair_data(test_file, "bert_udst_joint_softloss_006prob" + postfix + "/bert_logits.txt", optimize=optimize)
-# print("Joint Soft Loss 40% LM")
-# eval_combined_pair_data(test_file, "bert_udst_joint_softloss_lm_04" + postfix + "/bert_logits.txt", optimize=optimize)
-# print("Joint 0.4 Rel 0.4 LM")
-# eval_combined_pair_data(test_file, "bert_udst_joint_softloss_04rel_04lm" + postfix + "/bert_logits.txt", optimize=optimize)
-# print("Joint 0.2 Rel 0.2 LM")
-# eval_combined_pair_data(test_file, "bert_udst_joint_softloss_02rel_02lm" + postfix + "/bert_logits.txt", optimize=optimize)
-print("Classification Soft Loss LM")
-eval_combined_pair_data(test_file, "bert_udst_classification_softloss_lm" + postfix + "/bert_logits.txt", optimize=optimize)
-# print("Joint 0.2 Rel")
-# eval_combined_pair_data(test_file, "bert_udst_joint_softloss_smallrel" + postfix + "/bert_logits.txt", optimize=optimize)
-print("Joint Soft Loss LM")
-eval_combined_pair_data(test_file, "bert_udst_joint_softloss_lm" + postfix + "/bert_logits.txt", optimize=optimize)
+# optimize = False
+# postfix = ""
+# test_file = "samples/UD_English_SRL_9label_small/test.formatted.txt"
+# print("Vanilla")
+# eval_combined_pair_data(test_file, "bert_udst_vanilla" + postfix + "/bert_logits.txt", optimize=optimize)
+# print("Vanilla + LM")
+# eval_combined_pair_data(test_file, "bert_udst_lm" + postfix + "/bert_logits.txt", optimize=optimize)
+# # print("Joint Soft Loss")
+# # eval_combined_pair_data(test_file, "bert_udst_joint_softloss" + postfix + "/bert_logits.txt", optimize=optimize)
+# # print("Joint Soft Loss 0.06 Prob LM")
+# # eval_combined_pair_data(test_file, "bert_udst_joint_softloss_006prob" + postfix + "/bert_logits.txt", optimize=optimize)
+# # print("Joint Soft Loss 40% LM")
+# # eval_combined_pair_data(test_file, "bert_udst_joint_softloss_lm_04" + postfix + "/bert_logits.txt", optimize=optimize)
+# # print("Joint 0.4 Rel 0.4 LM")
+# # eval_combined_pair_data(test_file, "bert_udst_joint_softloss_04rel_04lm" + postfix + "/bert_logits.txt", optimize=optimize)
+# # print("Joint 0.2 Rel 0.2 LM")
+# # eval_combined_pair_data(test_file, "bert_udst_joint_softloss_02rel_02lm" + postfix + "/bert_logits.txt", optimize=optimize)
+# print("Classification Soft Loss LM")
+# eval_combined_pair_data(test_file, "bert_udst_classification_softloss_lm" + postfix + "/bert_logits.txt", optimize=optimize)
+# # print("Joint 0.2 Rel")
+# # eval_combined_pair_data(test_file, "bert_udst_joint_softloss_smallrel" + postfix + "/bert_logits.txt", optimize=optimize)
+# print("Joint Soft Loss LM")
+# eval_combined_pair_data(test_file, "bert_udst_joint_softloss_lm" + postfix + "/bert_logits.txt", optimize=optimize)
 
 # optimize = True
 # postfix = ""

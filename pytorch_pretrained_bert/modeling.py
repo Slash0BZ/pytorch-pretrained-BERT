@@ -1313,6 +1313,8 @@ class TemporalModelJointNew(BertPreTrainedModel):
         self.activation = nn.Tanh()
         self.classifier = nn.Linear(config.hidden_size, self.num_labels)
 
+        self.likelihood_classifier = nn.Linear(config.hidden_size, 4)
+
         self.cls = BertOnlyMLMHead(config, self.bert.embeddings.word_embeddings.weight)
         self.apply(self.init_bert_weights)
 
@@ -1324,7 +1326,7 @@ class TemporalModelJointNew(BertPreTrainedModel):
         lm_loss = self.lm_loss_fn(cls_output.view(-1, 30522), labels.view(-1))
         return lm_loss
 
-    def forward(self, input_ids, token_type_ids, attention_mask, target_ids, lm_labels):
+    def forward(self, input_ids, token_type_ids, attention_mask, target_ids, lm_labels=None, likelihood_labels=None):
         seq_output, _ = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False)
         target_all_output = seq_output.gather(1, target_ids.view(-1, 1).unsqueeze(2).repeat(1, 1, seq_output.size(2)))
 
@@ -1334,10 +1336,19 @@ class TemporalModelJointNew(BertPreTrainedModel):
         # pooled_output = self.dropout(target_all_output)
         logits = self.classifier(pooled_output)
 
+        if lm_labels is None:
+            return logits
+
         cls_logits = self.cls(seq_output)
         lm_loss = self.compute_lm_loss(cls_logits, lm_labels)
 
-        return logits, lm_loss
+        if likelihood_labels is None:
+            return logits, lm_loss
+
+        likelihood_logits = self.likelihood_classifier(seq_output)
+        likelihood_loss = self.lm_loss_fn(likelihood_logits.view(-1, 4), likelihood_labels.view(-1))
+
+        return logits, lm_loss + likelihood_loss, likelihood_logits.gather(1, target_ids.view(-1, 1).unsqueeze(2).repeat(1, 1, 4))
 
 
 class TemporalModelArguments(BertPreTrainedModel):

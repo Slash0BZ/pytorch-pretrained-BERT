@@ -59,7 +59,7 @@ class InputExample(object):
 
 class InputFeatures(object):
 
-    def __init__(self, input_ids, input_mask, segment_ids, lm_labels, target_idx, soft_labels, adjustment):
+    def __init__(self, input_ids, input_mask, segment_ids, lm_labels, target_idx, soft_labels, adjustment, likelihood_labels):
         self.input_ids = input_ids
         self.input_mask = input_mask
         self.segment_ids = segment_ids
@@ -67,6 +67,7 @@ class InputFeatures(object):
         self.target_idx = target_idx
         self.soft_labels = soft_labels
         self.adjustment = adjustment
+        self.likelihood_labels = likelihood_labels
 
 
 class DataProcessor(object):
@@ -117,7 +118,7 @@ class TemporalVerbProcessor(DataProcessor):
         seconds = convert_map[u] * float(v_input)
         prev_unit = "seconds"
         for i, v in enumerate(convert_map):
-            if seconds / convert_map[v] < 0.5:
+            if seconds / convert_map[v] < 0.2:
                 break
             prev_unit = v
         if prev_unit == "seconds" and seconds > 60.0:
@@ -162,11 +163,20 @@ class TemporalVerbProcessor(DataProcessor):
         return examples
 
 
-def randomize_likelihood_labels(l):
-    ret = [-1] * l
-    for i in range(1, l - 1):
-        prob = random.random()
-        if prob < 0.1:
+"""
+label_group_index: 1 for dur, 2 for freq, 3 for typ, 4 for ord
+when ord, no selection is done
+"""
+def randomize_likelihood_labels(tokens, pos, label_group_index):
+    ret = [-1] * len(tokens)
+    if label_group_index == 4:
+        return ret
+    for i in range(0, len(tokens)):
+        if tokens[i] in ["[CLS]", "[SEP]", "[MASK]"]:
+            continue
+        if i == pos:
+            ret[i] = label_group_index
+        else:
             ret[i] = 0
     return ret
 
@@ -175,7 +185,7 @@ def random_word(tokens, tokenizer):
     output_label = []
 
     for i, token in enumerate(tokens):
-        if token in ["[CLS]", "[SEP"]:
+        if token in ["[CLS]", "[SEP]"]:
             output_label.append(-1)
             continue
         prob = random.random()
@@ -366,7 +376,7 @@ def get_soft_labels(orig_label):
     return soft_labels, label_group, real_label_id
 
 
-def convert_examples_to_features(examples, max_seq_length, tokenizer):
+def convert_examples_to_features(examples, max_seq_length, tokenizer, train_mode=False):
     """Loads a data file into a list of `InputBatch`s."""
 
     features = []
@@ -374,7 +384,34 @@ def convert_examples_to_features(examples, max_seq_length, tokenizer):
         if ex_index % 10000 == 0:
             logger.info("Writing example %d of %d" % (ex_index, len(examples)))
 
-        tokens, lm_labels = random_word(example.text.split(), tokenizer)
+        if train_mode:
+            """MODIFICATIONS"""
+            tokens = example.text.split()
+            lm_labels = [-1] * len(tokens)
+            # tokens, lm_labels = random_word(example.text.split(), tokenizer)
+        else:
+            tokens = example.text.split()
+            lm_labels = [-1] * len(tokens)
+
+        for i, t in enumerate(tokens):
+            if t not in ["[CLS]", "[SEP]", "[MASK]"]:
+                tokens[i] = tokens[i].lower()
+
+        label_group_index = -1
+        if example.dimension == "DUR":
+            label_group_index = 1
+        elif example.dimension == "FREQ":
+            label_group_index = 2
+        elif example.dimension == "TYP":
+            label_group_index = 3
+        elif example.dimension == "ORD":
+            label_group_index = 4
+        if label_group_index == -1:
+            print("ERROR: SHOULD NEVER REACH HERE")
+            exit(0)
+
+        likelihood_labels = randomize_likelihood_labels(tokens, example.target_idx, label_group_index)
+
         first_sent_length = 0
         for i, t in enumerate(tokens):
             if t == "[SEP]":
@@ -394,11 +431,13 @@ def convert_examples_to_features(examples, max_seq_length, tokenizer):
         input_mask += padding
         segment_ids += padding
         lm_labels += lm_padding
+        likelihood_labels += lm_padding
 
         assert len(input_ids) == max_seq_length
         assert len(input_mask) == max_seq_length
         assert len(segment_ids) == max_seq_length
         assert len(lm_labels) == max_seq_length
+        assert len(likelihood_labels) == max_seq_length
 
         target_idx = example.target_idx
         soft_label_length = 51
@@ -410,15 +449,9 @@ def convert_examples_to_features(examples, max_seq_length, tokenizer):
         }
         """COMBINED WEIGHT"""
         adjustment_map = {
-            "DUR": [16.540970625798213, 3.8448873689335374, 1.8235395159973191, 1.7189426938584824, 1.3133984780633436, 0.6898745167472576, 0.3434554135229082, 0.4791514984698619, 2.9429924423175677],
-            "FREQ": [13.185669572993516, 6.121698064248274, 5.332203236597052, 0.33904740552954327, 1.198149333170816, 1.2243396128496549, 0.26337423751216854, 6.271079213184476, 62.116377040547654],
-            "TYP": [15.011903251186517, 2.6310161379285804, 16.128595969787035, 4.748663273334511, 8.70443842712503,
-             126.35847041230507, 1.8558631487460426, 10.990857737475844, 0.3117006033401086, 0.29835544451624,
-             0.29643179679113296, 0.307263298263331, 0.3252442559705793, 0.4985271348537628, 0.4670663883933824,
-             1.4400097382836274, 1.9593478160051412, 1.1165805847529298, 1.2998248540267092, 1.3422531855264204,
-             1.2093635692627283, 1.2316912421572568, 1.921463145242504, 1.61436069314308, 1.7979767275026446,
-             1.7378749460113, 1.6234262768874386, 4.658234627016129, 2.3844200240262516, 4.628852264012146,
-             7.839001245792138],
+            "DUR": [16.07986143329931, 3.654113247863248, 1.804793545654634, 1.7473774784131433, 1.3398226895520848, 0.6946071141787884, 0.3419168013280008, 0.4787923496814823, 2.954439803369988],
+            "FREQ": [12.708471724015766, 6.015007650548115, 5.471097384275146, 0.3337124330761037, 1.1928306294398097, 1.2343432779326244, 0.2665436907992874, 6.21914483236894, 68.1315289648623],
+            "TYP": [3.218687096884128, 0.5400490352683549, 3.4660330831909785, 1.0090916767334897, 1.7985591004698158, 25.429707992426216, 0.37511144798007384, 2.3702739417725986, 0.66258320694161, 0.6432200900606196, 0.6460801562689983, 0.6600779651242353, 0.6889589341202245, 1.0507886592702682, 0.9882072916395945, 1.232846902201741, 1.7056931513584903, 0.96131113910726, 1.1192265862875033, 1.1420168496616845, 0.9889626752237798, 1.0604158253395943, 1.667536556443924, 1.3948800821732852, 1.543814431630694, 1.5010240696090489, 1.4073512566700588, 0.931529722293279, 0.48221884070454957, 0.9395829194865744, 1.6137707899849802],
             "ORD": [1.0, 1.0]
         }
         soft_labels = [0.0] * soft_label_length
@@ -439,6 +472,7 @@ def convert_examples_to_features(examples, max_seq_length, tokenizer):
             logger.info("adjustments: %s" % str(adjustment))
             logger.info("target index: %s" % str(target_idx))
             logger.info("label: %s" % example.label)
+            logger.info("likelihood_labels: %s" % " ".join(str(x) for x in likelihood_labels))
 
         features.append(
             InputFeatures(
@@ -449,6 +483,7 @@ def convert_examples_to_features(examples, max_seq_length, tokenizer):
                 target_idx=target_idx,
                 soft_labels=soft_labels,
                 adjustment=adjustment,
+                likelihood_labels=likelihood_labels,
             )
         )
     return features
@@ -477,20 +512,36 @@ def compute_metrics(task_name, preds, labels, additional=None):
         raise KeyError(task_name)
 
 
-def soft_cross_entropy_loss(logits, soft_labels, lm_loss, adjustments=None):
+def soft_cross_entropy_loss(logits, soft_labels, lm_loss, lh_logits, adjustments=None, constraint=False):
 
-    logits_softmaxed = torch.cat((
+    individual_log_probs = [
         nn.functional.log_softmax(logits.narrow(1, 0, 9), -1),
         nn.functional.log_softmax(logits.narrow(1, 9, 9), -1),
         nn.functional.log_softmax(logits.narrow(1, 18, 31), -1),
         nn.functional.log_softmax(logits.narrow(1, 49, 2), -1),
-    ), -1)
+    ]
+    logits_softmaxed = torch.cat(individual_log_probs, -1)
 
     loss = -soft_labels * logits_softmaxed
     loss = torch.sum(loss, -1)
     if adjustments is not None:
         loss = loss * adjustments
     loss = loss.mean()
+
+    if constraint:
+        longer_than_day = torch.sum(torch.exp(individual_log_probs[0].narrow(1, 4, 5)), -1)
+        typ_shorter_than_day = torch.sum(torch.exp(individual_log_probs[2].detach().narrow(1, 0, 15)), -1)
+        lh_logits = nn.functional.softmax(lh_logits.detach(), -1)
+        lh_dif = lh_logits.narrow(2, 3, 1) - lh_logits.narrow(2, 1, 1)
+
+        loss_constraint = nn.functional.relu((typ_shorter_than_day - 0.9) * lh_dif.view(-1)) * longer_than_day
+        if adjustments is not None:
+            loss_constraint = loss_constraint * adjustments
+        loss_constraint = loss_constraint.mean() * 100.0
+        loss += loss_constraint
+
+        """additional constraints not tested"""
+
 
     if lm_loss is not None:
         return loss + lm_loss, loss.item()
@@ -772,7 +823,7 @@ def main():
     tr_loss = 0
     if args.do_train:
         train_features = convert_examples_to_features(
-            train_examples, args.max_seq_length, tokenizer)
+            train_examples, args.max_seq_length, tokenizer, train_mode=True)
         logger.info("***** Running training *****")
         logger.info("  Num examples = %d", len(train_examples))
         logger.info("  Batch size = %d", args.train_batch_size)
@@ -785,9 +836,10 @@ def main():
         all_target_idxs = torch.tensor([f.target_idx for f in train_features], dtype=torch.long)
         all_soft_labels = torch.tensor([f.soft_labels for f in train_features], dtype=torch.float)
         all_adjustments = torch.tensor([f.adjustment for f in train_features], dtype=torch.float)
+        all_likelihood_labels = torch.tensor([f.likelihood_labels for f in train_features], dtype=torch.long)
 
         train_data = TensorDataset(
-            all_input_ids, all_input_mask, all_segment_ids, all_lm_labels, all_target_idxs, all_soft_labels, all_adjustments
+            all_input_ids, all_input_mask, all_segment_ids, all_lm_labels, all_target_idxs, all_soft_labels, all_adjustments, all_likelihood_labels
         )
         if args.local_rank == -1:
             train_sampler = RandomSampler(train_data)
@@ -813,14 +865,14 @@ def main():
                     epoch_label_loss = 0.0
 
                 batch = tuple(t.to(device) for t in batch)
-                input_ids, input_mask, segment_ids, lm_labels, target_ids, soft_labels, adjustments = batch
+                input_ids, input_mask, segment_ids, lm_labels, target_ids, soft_labels, adjustments, likelihood_labels = batch
 
-                logits, lm_loss = model(
-                    input_ids, segment_ids, input_mask, target_ids, lm_labels
+                logits, lm_loss, likelihood_logits = model(
+                    input_ids, segment_ids, input_mask, target_ids, lm_labels, likelihood_labels
                 )
 
                 loss, non_lm_loss = soft_cross_entropy_loss(
-                    logits.view(-1, 51), soft_labels.view(-1, 51), lm_loss, adjustments
+                    logits.view(-1, 51), soft_labels.view(-1, 51), lm_loss, likelihood_logits, adjustments, constraint=False
                 )
 
                 if n_gpu > 1:
@@ -950,7 +1002,10 @@ def main():
         f_out.write("Label Distance\n")
         for key in prediction_distance_map:
             f_out.write(key + "\n")
-            f_out.write(str(prediction_distance_map[key] / prediction_count_map[key]) + "\n")
+            if prediction_count_map[key] > 0.0:
+                f_out.write(str(prediction_distance_map[key] / prediction_count_map[key]) + "\n")
+            else:
+                f_out.write("0.0\n")
 
         merge_map = {}
         merge_count_map = {}
@@ -959,7 +1014,8 @@ def main():
             if group not in merge_map:
                 merge_map[group] = 0.0
                 merge_count_map[group] = 0.0
-            merge_map[group] += float(per_label_distance_map[key] / per_label_count_map[key])
+            if per_label_count_map[key] > 0.0:
+                merge_map[group] += float(per_label_distance_map[key] / per_label_count_map[key])
             merge_count_map[group] += 1.0
         f_out.write("Macro Log Distance\n")
         for key in merge_count_map:

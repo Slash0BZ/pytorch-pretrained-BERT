@@ -407,6 +407,21 @@ class BertEncoder(nn.Module):
         return all_encoder_layers
 
 
+class BertCustomEncoder(nn.Module):
+    def __init__(self, config, num_layer=4):
+        super(BertCustomEncoder, self).__init__()
+        layer = BertLayer(config)
+        self.layer = nn.ModuleList([copy.deepcopy(layer) for _ in range(num_layer)])
+
+    def forward(self, hidden_states, attention_mask, output_all_encoded_layers=False):
+        extended_attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
+        extended_attention_mask = extended_attention_mask.to(dtype=next(self.parameters()).dtype) # fp16 compatibility
+        extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
+        for layer_module in self.layer:
+            hidden_states = layer_module(hidden_states, extended_attention_mask)
+        return hidden_states
+
+
 class BertEncoderPredicate(nn.Module):
     def __init__(self, config):
         super(BertEncoderPredicate, self).__init__()
@@ -1351,6 +1366,43 @@ class TemporalModelJointNew(BertPreTrainedModel):
         return logits, lm_loss + likelihood_loss, likelihood_logits.gather(1, target_ids.view(-1, 1).unsqueeze(2).repeat(1, 1, 4))
 
 
+class TemporalModelJointNewPureTransformer(BertPreTrainedModel):
+    def __init__(self, config, num_labels=51):
+        super(TemporalModelJointNewPureTransformer, self).__init__(config)
+        self.num_labels = num_labels
+        self.bert = BertModel(config)
+        for p in self.bert.parameters():
+            p.requires_grad = False
+
+        self.transformer = BertCustomEncoder(config, num_layer=6)
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+
+        self.dense = nn.Linear(config.hidden_size, config.hidden_size)
+        self.activation = nn.Tanh()
+        self.classifier = nn.Linear(config.hidden_size, self.num_labels)
+
+        self.likelihood_classifier = nn.Linear(config.hidden_size, 4)
+
+        self.apply(self.init_bert_weights)
+
+        self.label_loss_fn = CrossEntropyLoss(ignore_index=-1)
+
+    def forward(self, input_ids, token_type_ids, attention_mask, target_ids, lm_labels=None, likelihood_labels=None):
+        seq_output, _ = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False)
+        seq_output = self.transformer(seq_output, attention_mask)
+        target_all_output = seq_output.gather(1, target_ids.view(-1, 1).unsqueeze(2).repeat(1, 1, seq_output.size(2)))
+
+        pooled_output = self.dense(target_all_output)
+        pooled_output = self.activation(pooled_output)
+        pooled_output = self.dropout(pooled_output)
+        logits = self.classifier(pooled_output)
+
+        likelihood_logits = self.likelihood_classifier(seq_output)
+        likelihood_loss = self.label_loss_fn(likelihood_logits.view(-1, 4), likelihood_labels.view(-1))
+
+        return logits, likelihood_loss, likelihood_logits.gather(1, target_ids.view(-1, 1).unsqueeze(2).repeat(1, 1, 4))
+
+
 class TemporalModelArguments(BertPreTrainedModel):
     def __init__(self, config):
         super(TemporalModelArguments, self).__init__(config)
@@ -1447,6 +1499,53 @@ class TemporalModelJointWithLikelihood(BertPreTrainedModel):
             return torch.cat((freq_a, dur_a, typ_a), -1), torch.cat((freq_b, dur_b, typ_b), -1), aux_loss_a + aux_loss_b
         else:
             return torch.cat((freq_a, dur_a, typ_a), -1), torch.cat((freq_b, dur_b, typ_b), -1), None
+
+
+class HieveModel(BertPreTrainedModel):
+    def __init__(self, config, num_labels=4):
+        super(HieveModel, self).__init__(config)
+        self.num_labels = num_labels
+        self.bert = BertModel(config)
+        # for p in self.bert.parameters():
+        #     p.requires_grad = False
+        # self.transformer = BertCustomEncoder(config, num_layer=6)
+
+        self.pooler_dense = nn.Linear(config.hidden_size * 2, config.hidden_size)
+        self.pooler_activation = nn.Tanh()
+        self.pooler_classifier = nn.Linear(config.hidden_size, self.num_labels)
+        self.dense = nn.Linear(config.hidden_size, config.hidden_size)
+        self.activation = nn.Tanh()
+        self.classifier = nn.Linear(config.hidden_size, 51)
+
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+        self.apply(self.init_bert_weights)
+
+        self.label_loss_fn = CrossEntropyLoss(ignore_index=-1)
+
+    def forward(self, input_ids, token_type_ids, attention_mask, target_ids_a, target_ids_b, labels=None):
+        seq_output, _ = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False)
+        # seq_output = self.transformer(seq_output, attention_mask)
+
+        output_a = seq_output.gather(1, target_ids_a.view(-1, 1).unsqueeze(2).repeat(1, 1, seq_output.size(2)))
+        output_b = seq_output.gather(1, target_ids_b.view(-1, 1).unsqueeze(2).repeat(1, 1, seq_output.size(2)))
+
+        # output_a = self.dense(output_a)
+        # output_a = self.activation(output_a)
+        # output_a = self.dropout(output_a)
+        # output_a = self.classifier(output_a)
+        # output_b = self.dense(output_b)
+        # output_b = self.activation(output_b)
+        # output_b = self.dropout(output_b)
+        # output_b = self.classifier(output_b)
+
+        pooled_output = self.pooler_dense(torch.cat((output_a, output_b), -1))
+        pooled_output = self.pooler_activation(pooled_output)
+        logits = self.pooler_classifier(pooled_output)
+
+        if labels is None:
+            return logits
+        else:
+            return self.label_loss_fn(logits.view(-1, 4), labels.view(-1))
 
 
 class BertForSingleTokenClassificationWithPooler(BertPreTrainedModel):

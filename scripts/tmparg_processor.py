@@ -325,9 +325,9 @@ class TmpArgDimensionFilter:
         # self.srl_lines = [x.strip() for x in open(self.srl_file_path).readlines()]
         self.rand_file_path = "samples/gigaword/raw_collection_randsent_contextsent_tokenized.txt"
         self.rand_lines = [x.strip() for x in open(self.rand_file_path).readlines()]
-        self.output_path = "samples/gigaword/twosent_small"
+        self.output_path = "samples/gigaword/twosent_small_lesstyp"
         # self.output_path_srl = "samples/wikipedia_fixed/onesent_srl"
-        self.output_path_singlesent = "samples/gigaword/onesent_small"
+        self.output_path_singlesent = "samples/gigaword/onesent_small_lesstyp"
         self.value_map = {
             "second": 1.0,
             "seconds": 1.0,
@@ -668,7 +668,7 @@ class TmpArgDimensionFilter:
                 """SAMPLING!"""
                 r = random.random()
                 sample_map = {
-                    1: 2.0, 2: 0.1, 3: 0.25, 4: 2.0
+                    1: 0.1, 2: 0.1, 3: 0.1, 4: 0.1
                 }
                 if r < sample_map[typ_group]:
                     typical_strings.append([

@@ -44,6 +44,6 @@ class LossVisualizer:
 visualizer = LossVisualizer("loss_log.txt")
 
 # visualizer = LossVisualizer("loss_log.txt")
-visualizer.visualize("Label Loss")
+visualizer.visualize("Total Loss")
 visualizer.visual_diff("Total Loss", "Label Loss")
 

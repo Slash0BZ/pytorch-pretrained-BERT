@@ -36,7 +36,7 @@ from tqdm import tqdm, trange
 from torch.nn import CrossEntropyLoss
 
 from pytorch_pretrained_bert.file_utils import PYTORCH_PRETRAINED_BERT_CACHE
-from pytorch_pretrained_bert.modeling import TemporalModelJointNew, BertConfig, WEIGHTS_NAME, CONFIG_NAME
+from pytorch_pretrained_bert.modeling import TemporalModelJointNew, TemporalModelJointNewPureTransformer, BertConfig, WEIGHTS_NAME, CONFIG_NAME
 from pytorch_pretrained_bert.tokenization import BertTokenizer, BasicTokenizer
 from pytorch_pretrained_bert.optimization import BertAdam, warmup_linear
 
@@ -386,9 +386,9 @@ def convert_examples_to_features(examples, max_seq_length, tokenizer, train_mode
 
         if train_mode:
             """MODIFICATIONS"""
-            tokens = example.text.split()
-            lm_labels = [-1] * len(tokens)
-            # tokens, lm_labels = random_word(example.text.split(), tokenizer)
+            # tokens = example.text.split()
+            # lm_labels = [-1] * len(tokens)
+            tokens, lm_labels = random_word(example.text.split(), tokenizer)
         else:
             tokens = example.text.split()
             lm_labels = [-1] * len(tokens)
@@ -416,6 +416,7 @@ def convert_examples_to_features(examples, max_seq_length, tokenizer, train_mode
         for i, t in enumerate(tokens):
             if t == "[SEP]":
                 first_sent_length = i + 1
+                break
 
         if len(tokens) > max_seq_length:
             # Never delete any token
@@ -541,7 +542,6 @@ def soft_cross_entropy_loss(logits, soft_labels, lm_loss, lh_logits, adjustments
         loss += loss_constraint
 
         """additional constraints not tested"""
-
 
     if lm_loss is not None:
         return loss + lm_loss, loss.item()
@@ -985,8 +985,8 @@ def main():
                 logits, lm_loss = model(
                     input_ids, segment_ids, input_mask, target_ids, lm_labels
                 )
-                loss = soft_cross_entropy_loss(
-                    logits.view(-1, 51), soft_labels.view(-1, 51), None
+                _, loss = soft_cross_entropy_loss(
+                    logits.view(-1, 51), soft_labels.view(-1, 51), lm_loss, None, None, constraint=False
                 )
             prediction_distance_map = combine_map(prediction_distance_map, compute_distance(logits.view(-1, 51).cpu().numpy(), soft_labels.cpu().numpy())[0])
             prediction_count_map = combine_map(prediction_count_map, compute_distance(logits.view(-1, 51).cpu().numpy(), soft_labels.cpu().numpy())[1])

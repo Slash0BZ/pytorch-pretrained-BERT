@@ -50,6 +50,10 @@ class GigawordExtractor:
             "age ", "fall "
         ]
 
+        self.additional_keys = [
+            "until", "since", "during", "when", "while"
+        ]
+
     def strip_html_labels(self, str):
         soup = BeautifulSoup(str)
         return soup.get_text()
@@ -94,15 +98,15 @@ class GigawordExtractor:
                 # for key in self.typ_keys:
                 #     if key in sent.lower():
                 #         ap = True
-                # for key in self.additional_keys:
-                #     if key in sent.lower():
-                #         ap = True
+                for key in self.additional_keys:
+                    if key in sent.lower():
+                        ap = True
                 # for key in self.ordering_keys:
                 #     if key in sent.lower():
                 #         ap = True
-                r = random.random()
-                if r < 0.01:
-                    ap = True
+                # r = random.random()
+                # if r < 0.01:
+                #     ap = True
                 if ap:
                     prev_sent = "NONE"
                     if i > 0:
@@ -296,6 +300,8 @@ class MultiLingualLinker:
             "en": "/shared/wikipedia/processed/enlink_in_pages",
             "fr": "/shared/wikipedia/processed/frlink_in_pages",
         }
+        self.nlp = English()
+        self.nlp.add_pipe(self.nlp.create_pipe('sentencizer'))
         self.build_outputs(['en', 'fr'])
 
     def build_idmap(self, langs):
@@ -331,40 +337,81 @@ class MultiLingualLinker:
                                 continue
                             all_file_paths.add(s_path + "/" + dir + "/" + file)
             all_file_paths = list(all_file_paths)
-            for file_path in all_file_paths:
+            for i, file_path in enumerate(all_file_paths):
+                if i % 10 == 0:
+                    print(float(i) / float(len(all_file_paths)))
                 with open(file_path) as json_file:
                     data = json.load(json_file)
                 for obj in data:
                     text = obj['text']
+                    doc = self.nlp(text)
+                    tokens = []
+                    for t in doc:
+                        tokens.append([str(t), t.idx])
+                    st = ""
+                    for surf, idx in tokens:
+                        st += surf + "(" + str(idx) + ")" + " "
+                    tokens_rep = [t[0] for t in tokens]
                     spans = obj['linked_spans']
+                    reverse_map = {}
+                    for k in enumerate(tokens):
+                        reverse_map[k[1][1]] = k[0]
                     for span in spans:
                         start = span['start']
                         end = span['end']
+                        tok_start = -1
+                        tok_end = -1
+                        if start in reverse_map:
+                            tok_start = reverse_map[start]
+                        else:
+                            for ii in range(1, 10):
+                                if start + ii in reverse_map:
+                                    tok_start = reverse_map[start + ii]
+                                    break
+                                if start - ii in reverse_map:
+                                    tok_start = reverse_map[start - ii]
+                                    break
+                        if end in reverse_map:
+                            tok_end = reverse_map[end]
+                        else:
+                            for ii in range(1, 25):
+                                if end + ii in reverse_map:
+                                    tok_end = reverse_map[end + ii]
+                                    break
+                        # if tok_start == -1 or tok_end == -1:
+                        #     print(st)
+                        #     print(str(start) + " " + str(end))
+                        start = tok_start
+                        end = tok_end
+
                         title = span['label']
                         if lang != "en":
                             if title not in self.idmap[lang]:
                                 continue
                             title = self.idmap[lang][title]
-                        if title in self.target_list[lang]:
-                            self.outputs[lang].append({
-                                "text": text,
-                                "start": start,
-                                "end": end,
-                                "title": title,
-                            })
+                        if title.lower() in self.target_list[lang]:
+                            tokens_rep[start] = title.lower()
+                            for i in range(start+1, end):
+                                tokens_rep[i] = "DELETE"
+                    new_tokens = []
+                    for t in tokens_rep:
+                        if t != "DELETE":
+                            new_tokens.append(t)
+                    self.outputs[lang].append(" ".join(new_tokens))
 
     def save(self, output_path):
         for lang in self.outputs:
-            print(lang + " counts: " + str(len(self.outputs[lang])) + "\n")
-        with open(output_path, 'w') as f:
-            json.dump(self.outputs, f)
+            out_file = output_path + "_" + lang + "_gold.txt"
+            with open(out_file, 'w') as f:
+                for doc in self.outputs[lang]:
+                    f.write(doc + "\n")
 
 
 # extractor = GigawordExtractor()
-# extractor.process_path("samples/gigaword/all", "samples/gigaword/raw_collection_randsent_contextsent.txt")
+# extractor.process_path("samples/gigaword/all", "samples/gigaword/raw_collection_randsent_contextsent_additional.txt")
 # extractor = WikipediaExtractor()
 # extractor.process_path("/shared/wikipedia/processed/enwiki_with_links", "samples/wikipedia/raw_collection_randomsent_contextsent.txt")
-p = TokenizationProcessor()
+# p = TokenizationProcessor()
 # r = Randomizer()
-# m = MultiLingualLinker()
-# m.save("samples/linking/outputs.json")
+m = MultiLingualLinker()
+m.save("samples/linking/outputs")

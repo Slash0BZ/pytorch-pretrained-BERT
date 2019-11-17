@@ -871,7 +871,13 @@ class TmpArgDimensionFilter:
     def process_new_forms(self):
         all_instances_map = {}
         tokenizer = BertTokenizer.from_pretrained("bert-base-uncased", do_lower_case=True)
+        total_lines = float(len(self.lines))
         for i, line in enumerate(self.lines):
+            skip_prob = random.random()
+            if skip_prob > 0.1:
+                continue
+            if i % 10000 == 0:
+                print(float(i) / total_lines)
             group = line.split("\t")
             sent = group[0]
             tokens_lower = sent.lower().split()
@@ -906,6 +912,9 @@ class TmpArgDimensionFilter:
             no_tmp_token.insert(verb_pos, verb_separator)
 
             prev_two_sents_tokens = ["[CLS]"] + prev_sent.split() + ["[SEP]"] + no_tmp_token
+            if len(prev_two_sents_tokens) + len(next_sent.split()) > 128:
+                continue
+
             mask_mode = False
             mlm_labels = [-1] * 128
             r = random.random()
@@ -913,11 +922,14 @@ class TmpArgDimensionFilter:
                 mask_mode = True
             else:
                 for it in range(2 + len(prev_sent.split()), 2 + len(prev_sent.split()) + len(no_tmp_token)):
+                    if prev_two_sents_tokens[it] in ["[unused500]"]:
+                        continue
                     prob = random.random()
                     # mask token with 15% probability
                     if prob < 0.30:
                         prob /= 0.30
 
+                        orig_token = prev_two_sents_tokens[it]
                         # 80% randomly change token to mask token
                         if prob < 0.8:
                             prev_two_sents_tokens[it] = "[MASK]"
@@ -930,7 +942,7 @@ class TmpArgDimensionFilter:
 
                         # append current token to output (we will predict these later)
                         try:
-                            mlm_labels[it] = tokenizer.vocab[prev_two_sents_tokens[it]]
+                            mlm_labels[it] = tokenizer.vocab[orig_token]
                         except KeyError:
                             """CHANGED: NEVER PREDICT [UNK]"""
                             mlm_labels[it] = -1
@@ -944,7 +956,7 @@ class TmpArgDimensionFilter:
                 target_index = -1
                 if mask_mode:
                     unit_string = "[MASK]"
-                sent_string = " ".join(no_tmp_token) + " [SEP] " + next_sent + " [SEP] [unused500] [unused501] "
+                sent_string = " ".join(prev_two_sents_tokens) + " [SEP] " + next_sent + " [SEP] [unused500] [unused501] "
                 if mask_mode:
                     target_index = len(sent_string.split())
                 sent_string += unit_string + " [SEP]"
@@ -953,7 +965,14 @@ class TmpArgDimensionFilter:
                 if key not in all_instances_map:
                     all_instances_map[key] = []
                 all_instances_map[key].append(["DUR", sent_string, target_index, soft_label_indices, soft_label_values, mlm_labels])
-                print(sent_string)
+                print_str = ""
+                for iii, tok in enumerate(sent_string.split()):
+                    print_str += tok + "(" + str(iii) + ")" + " "
+                # print(print_str)
+                print_str = ""
+                for iii, tok in enumerate(mlm_labels):
+                    print_str += str(tok) + "(" + str(iii) + ")" + " "
+                # print(print_str)
 
             if frequency_check != "NO_UNIT_FOUND" and frequency_check != "FOUND_UNIT_BUT_NOT_FREQUENCY" and frequency_check != "SKIP_DURATION":
                 unit_string = self.normalize_timex(frequency_check)
@@ -961,7 +980,7 @@ class TmpArgDimensionFilter:
                 target_index = -1
                 if mask_mode:
                     unit_string = "[MASK]"
-                sent_string = "[CLS] " + prev_sent + " [SEP] " + " ".join(no_tmp_token) + " [SEP] " + next_sent + " [SEP] [unused500] [unused502] "
+                sent_string = " ".join(prev_two_sents_tokens) + " [SEP] " + next_sent + " [SEP] [unused500] [unused502] "
                 if mask_mode:
                     target_index = len(sent_string.split())
                 sent_string += unit_string + " [SEP]"
@@ -977,7 +996,7 @@ class TmpArgDimensionFilter:
                 target_index = -1
                 if mask_mode:
                     unit_string = "[MASK]"
-                sent_string = "[CLS] " + prev_sent + " [SEP] " + " ".join(no_tmp_token) + " [SEP] " + next_sent + " [SEP] [unused500] [unused503] "
+                sent_string = " ".join(prev_two_sents_tokens) + " [SEP] " + next_sent + " [SEP] [unused500] [unused503] "
                 if mask_mode:
                     target_index = len(sent_string.split())
                 sent_string += unit_string + " [SEP]"
@@ -994,7 +1013,7 @@ class TmpArgDimensionFilter:
                 target_index = -1
                 if mask_mode:
                     unit_string = "[MASK]"
-                sent_string = "[CLS] " + prev_sent + " [SEP] " + " ".join(no_tmp_token) + " [SEP] " + next_sent + " [SEP] [unused500] [unused504] "
+                sent_string = " ".join(prev_two_sents_tokens) + " [SEP] " + next_sent + " [SEP] [unused500] [unused504] "
                 if mask_mode:
                     target_index = len(sent_string.split())
                 sent_string += unit_string + " " + content_string + " [SEP]"
@@ -1010,7 +1029,7 @@ class TmpArgDimensionFilter:
                 target_index = -1
                 if mask_mode:
                     unit_string = "[MASK]"
-                sent_string = "[CLS] " + prev_sent + " [SEP] " + " ".join(no_tmp_token) + " [SEP] " + next_sent + " [SEP] [unused500] [unused505] "
+                sent_string = " ".join(prev_two_sents_tokens) + " [SEP] " + next_sent + " [SEP] [unused500] [unused505] "
                 if mask_mode:
                     target_index = len(sent_string.split())
                 sent_string += unit_string + " [SEP]"
@@ -1021,7 +1040,7 @@ class TmpArgDimensionFilter:
                 all_instances_map[key].append(["BND", sent_string, target_index, soft_label_indices, soft_label_values, mlm_labels])
 
         care_order = ["DUR", "ORD", "FREQ", "BND", "TYP"]
-        f_out = open("samples/gigaword/lm_format.txt", "w")
+        f_out = open("samples/gigaword/lm_format_small.txt", "w")
         count_map = {}
         for key in all_instances_map:
             select = None

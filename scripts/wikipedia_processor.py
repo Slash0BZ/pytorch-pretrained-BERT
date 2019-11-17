@@ -298,11 +298,11 @@ class MultiLingualLinker:
         self.outputs = {}
         self.source_path = {
             "en": "/shared/wikipedia/processed/enlink_in_pages",
-            "fr": "/shared/wikipedia/processed/frlink_in_pages",
+            # "fr": "/shared/wikipedia/processed/frlink_in_pages",
         }
         self.nlp = English()
         self.nlp.add_pipe(self.nlp.create_pipe('sentencizer'))
-        self.build_outputs(['en', 'fr'])
+        self.build_outputs(['en'])
 
     def build_idmap(self, langs):
         for lang in langs:
@@ -384,19 +384,26 @@ class MultiLingualLinker:
                         start = tok_start
                         end = tok_end
 
-                        title = span['label']
-                        if lang != "en":
-                            if title not in self.idmap[lang]:
-                                continue
-                            title = self.idmap[lang][title]
-                        if title.lower() in self.target_list[lang]:
-                            tokens_rep[start] = title.lower()
-                            for i in range(start+1, end):
-                                tokens_rep[i] = "DELETE"
+                        tokens_rep[start] = "[[" + tokens_rep[start] + "]]"
+                        tokens_rep[end - 1] = "{{" + tokens_rep[end - 1] + "}}"
+
+                        # title = span['label']
+                        # if lang != "en":
+                        #     if title not in self.idmap[lang]:
+                        #         continue
+                        #     title = self.idmap[lang][title]
+                        # if title.lower() in self.target_list[lang]:
+                        #     tokens_rep[start] = title.lower()
+                        #     for i in range(start+1, end):
+                        #         tokens_rep[i] = "DELETE"
                     new_tokens = []
                     for t in tokens_rep:
-                        if t != "DELETE":
+                        if t == "\t":
+                            new_tokens.append(" ")
+                        else:
                             new_tokens.append(t)
+                        # if t != "DELETE":
+                        #     new_tokens.append(t)
                     self.outputs[lang].append(" ".join(new_tokens))
 
     def save(self, output_path):
@@ -414,4 +421,4 @@ class MultiLingualLinker:
 # p = TokenizationProcessor()
 # r = Randomizer()
 m = MultiLingualLinker()
-m.save("samples/linking/outputs")
+m.save("samples/linking/span")

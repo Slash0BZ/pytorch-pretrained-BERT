@@ -1420,14 +1420,13 @@ class TemporalModelArguments(BertPreTrainedModel):
         lm_loss = self.lm_loss_fn(cls_output.view(-1, 30522), labels.view(-1))
         return lm_loss
 
-    def forward(self, input_ids, token_type_ids, attention_mask, lm_labels, target_ids_a, target_ids_b):
+    def forward(self, input_ids, token_type_ids, attention_mask, lm_labels, target_ids):
         sequence_output, pooled_output = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False)
         prediction_scores = self.cls(sequence_output)
         masked_lm_loss = self.lm_loss_fn(prediction_scores.view(-1, self.config.vocab_size), lm_labels.view(-1))
-        ret_cls_a = prediction_scores.gather(1, target_ids_a.view(-1, 1).unsqueeze(2).repeat(1, 1, prediction_scores.size(2)))
-        ret_cls_b = prediction_scores.gather(1, target_ids_b.view(-1, 1).unsqueeze(2).repeat(1, 1, prediction_scores.size(2)))
+        ret_cls = prediction_scores.gather(1, target_ids.view(-1, 1).unsqueeze(2).repeat(1, 1, prediction_scores.size(2)))
 
-        return masked_lm_loss, ret_cls_a, ret_cls_b
+        return masked_lm_loss, ret_cls
 
 
 class TemporalModelJointWithLikelihood(BertPreTrainedModel):

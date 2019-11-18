@@ -104,15 +104,30 @@ class BertTokenizer(object):
         self.wordpiece_tokenizer = WordpieceTokenizer(vocab=self.vocab)
         self.max_len = max_len if max_len is not None else int(1e12)
 
-    def tokenize(self, text):
+    def tokenize(self, text, ret_boundary=False):
+        token_start_ids = []
+        token_end_ids = []
         if self.do_basic_tokenize:
           split_tokens = []
           for token in self.basic_tokenizer.tokenize(text):
+              if "[[" in token and "]]" in token:
+                  token_start_id = len(split_tokens) + 1
+                  token_start_ids.append(token_start_id)
+                  token = token.replace("[[", "")
+                  token = token.replace("]]", "")
+              if "{{" in token and "}}" in token:
+                  token = token.replace("{{", "")
+                  token = token.replace("}}", "")
+                  token_end_id = len(split_tokens) + len(self.wordpiece_tokenizer.tokenize(token)) - 1
+                  token_end_ids.append(token_end_id)
               for sub_token in self.wordpiece_tokenizer.tokenize(token):
                   split_tokens.append(sub_token)
         else:
           split_tokens = self.wordpiece_tokenizer.tokenize(text)
-        return self.basic_tokenizer.tokenize(text)
+        if ret_boundary:
+            return split_tokens, token_start_ids, token_end_ids
+        else:
+            return self.basic_tokenizer.tokenize(text)
 
     def convert_tokens_to_ids(self, tokens):
         """Converts a sequence of tokens into ids using the vocab."""
@@ -225,7 +240,7 @@ class BasicTokenizer(object):
     def _run_split_on_punc(self, text):
         """Splits punctuation on a piece of text."""
         # Warning: modified
-        return [text]
+        # return [text]
         if text in self.never_split:
             return [text]
         chars = list(text)

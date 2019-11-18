@@ -321,13 +321,11 @@ class TmpArgProcessor:
 class TmpArgDimensionFilter:
     def __init__(self):
         self.file_path = "samples/gigaword/tmparg_collection_with_prev_and_next.txt"
+        ## Required
         self.lines = list(set([x.strip() for x in open(self.file_path).readlines()]))
-        # self.srl_file_path = "samples/wikipedia/tmparg_collection_srl_skeleton_with_prev_and_next.txt"
-        # self.srl_lines = [x.strip() for x in open(self.srl_file_path).readlines()]
         self.rand_file_path = "samples/gigaword/raw_collection_randsent_contextsent_tokenized.txt"
         self.rand_lines = [x.strip() for x in open(self.rand_file_path).readlines()]
         self.output_path = "samples/gigaword/twosent_small_lesstyp"
-        # self.output_path_srl = "samples/wikipedia_fixed/onesent_srl"
         self.output_path_singlesent = "samples/gigaword/onesent_small_lesstyp"
         self.value_map = {
             "second": 1.0,
@@ -487,7 +485,8 @@ class TmpArgDimensionFilter:
         if unit == "":
             return "NO_UNIT_FOUND"
         valid = False
-        for i, token in enumerate(tmparg_tokens[quantity_stop-5:quantity_stop]):
+        start_anchor = max(0, quantity_stop - 5)
+        for i, token in enumerate(tmparg_tokens[start_anchor:quantity_stop]):
             if token == "every" or token == "once" or token == "per" or token == "each":
                 num /= 1.0
                 valid = True
@@ -495,12 +494,12 @@ class TmpArgDimensionFilter:
                 num /= 2.0
                 valid = True
             if token == "times":
-                div = self.quantity([tmparg_tokens[quantity_stop-5:quantity_stop][i-1]])
+                div = self.quantity([tmparg_tokens[start_anchor:quantity_stop][i-1]])
                 if div is not None and div > 0.0:
                     num /= div
                     valid = True
             if token == "time":
-                num_key = tmparg_tokens[quantity_stop-5:quantity_stop][i-1]
+                num_key = tmparg_tokens[start_anchor:quantity_stop][i-1]
                 converted_num_key = self.order_number_convert(num_key)
                 if converted_num_key > 0.0:
                     num /= converted_num_key
@@ -714,26 +713,27 @@ class TmpArgDimensionFilter:
             ret_vec[cur_target] = max(ret_vec[cur_target], label_vector_rev[i - target + 3])
         return ret_vec
 
-    def get_soft_labels(self, orig_label):
+    def get_soft_labels(self, orig_label, tokenizer):
+        markers = ["_dur", "_freq", "_bnd"]
         keywords = {
-            "second": [0, 0],
-            "seconds": [0, 0],
-            "minute": [0, 1],
-            "minutes": [0, 1],
-            "hour": [0, 2],
-            "hours": [0, 2],
-            "day": [0, 3],
-            "days": [0, 3],
-            "week": [0, 4],
-            "weeks": [0, 4],
-            "month": [0, 5],
-            "months": [0, 5],
-            "year": [0, 6],
-            "years": [0, 6],
-            "decade": [0, 7],
-            "decades": [0, 7],
-            "century": [0, 8],
-            "centuries": [0, 8],
+            "second" + markers[0]: [0, 0],
+            "seconds" + markers[0]: [0, 0],
+            "minute" + markers[0]: [0, 1],
+            "minutes" + markers[0]: [0, 1],
+            "hour" + markers[0]: [0, 2],
+            "hours" + markers[0]: [0, 2],
+            "day" + markers[0]: [0, 3],
+            "days" + markers[0]: [0, 3],
+            "week" + markers[0]: [0, 4],
+            "weeks" + markers[0]: [0, 4],
+            "month" + markers[0]: [0, 5],
+            "months" + markers[0]: [0, 5],
+            "year" + markers[0]: [0, 6],
+            "years" + markers[0]: [0, 6],
+            "decade" + markers[0]: [0, 7],
+            "decades" + markers[0]: [0, 7],
+            "century" + markers[0]: [0, 8],
+            "centuries" + markers[0]: [0, 8],
             "dawns": [1, 0],
             "mornings": [1, 1],
             "noons": [1, 2],
@@ -804,6 +804,42 @@ class TmpArgDimensionFilter:
             "winter": [4, 3],
             "after": [5, 0],
             "before": [5, 1],
+            "second" + markers[1]: [6, 0],
+            "seconds" + markers[1]: [6, 0],
+            "minute" + markers[1]: [6, 1],
+            "minutes" + markers[1]: [6, 1],
+            "hour" + markers[1]: [6, 2],
+            "hours" + markers[1]: [6, 2],
+            "day" + markers[1]: [6, 3],
+            "days" + markers[1]: [6, 3],
+            "week" + markers[1]: [6, 4],
+            "weeks" + markers[1]: [6, 4],
+            "month" + markers[1]: [6, 5],
+            "months" + markers[1]: [6, 5],
+            "year" + markers[1]: [6, 6],
+            "years" + markers[1]: [6, 6],
+            "decade" + markers[1]: [6, 7],
+            "decades" + markers[1]: [6, 7],
+            "century" + markers[1]: [6, 8],
+            "centuries" + markers[1]: [6, 8],
+            "second" + markers[2]: [7, 0],
+            "seconds" + markers[2]: [7, 0],
+            "minute" + markers[2]: [7, 1],
+            "minutes" + markers[2]: [7, 1],
+            "hour" + markers[2]: [7, 2],
+            "hours" + markers[2]: [7, 2],
+            "day" + markers[2]: [7, 3],
+            "days" + markers[2]: [7, 3],
+            "week" + markers[2]: [7, 4],
+            "weeks" + markers[2]: [7, 4],
+            "month" + markers[2]: [7, 5],
+            "months" + markers[2]: [7, 5],
+            "year" + markers[2]: [7, 6],
+            "years" + markers[2]: [7, 6],
+            "decade" + markers[2]: [7, 7],
+            "decades" + markers[2]: [7, 7],
+            "century" + markers[2]: [7, 8],
+            "centuries" + markers[2]: [7, 8],
         }
         vocab_indices = {
             0: [1, 2, 3, 4, 5, 6, 7, 8, 9],
@@ -812,6 +848,8 @@ class TmpArgDimensionFilter:
             3: [25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36],
             4: [37, 38, 39, 40],
             5: [41, 42],
+            6: [43, 44, 45, 46, 47, 48, 49, 50, 51],
+            7: [52, 53, 54, 55, 56, 57, 58, 59, 60],
         }
         if orig_label not in keywords:
             print("ERROR WHEN MAPPING SOFT LABELS")
@@ -866,16 +904,16 @@ class TmpArgDimensionFilter:
         for i in range(50, pad_size + 50):
             pad_vec.append(i)
 
-        return vocab_indices[label_group] + pad_vec, soft_labels + [0.0] * pad_size
+        return vocab_indices[label_group] + pad_vec, soft_labels + [0.0] * pad_size, tokenizer.ids_to_tokens[label_id]
 
     def process_new_forms(self):
         all_instances_map = {}
         tokenizer = BertTokenizer.from_pretrained("bert-base-uncased", do_lower_case=True)
         total_lines = float(len(self.lines))
         for i, line in enumerate(self.lines):
-            skip_prob = random.random()
-            if skip_prob > 0.1:
-                continue
+            # skip_prob = random.random()
+            # if skip_prob > 0.1:
+            #     continue
             if i % 10000 == 0:
                 print(float(i) / total_lines)
             group = line.split("\t")
@@ -951,39 +989,39 @@ class TmpArgDimensionFilter:
                         mlm_labels[it] = -1
 
             if duration_check != "NO_UNIT_FOUND" and duration_check != "FOUND_UNIT_BUT_NOT_DURATION":
-                unit_string = self.normalize_timex(duration_check)
-                soft_label_indices, soft_label_values = self.get_soft_labels(unit_string)
+                unit_string = self.normalize_timex(duration_check) + "_dur"
+                soft_label_indices, soft_label_values, rep_label = self.get_soft_labels(unit_string, tokenizer)
                 target_index = -1
                 if mask_mode:
-                    unit_string = "[MASK]"
+                    rep_label = "[MASK]"
                 sent_string = " ".join(prev_two_sents_tokens) + " [SEP] " + next_sent + " [SEP] [unused500] [unused501] "
                 if mask_mode:
                     target_index = len(sent_string.split())
-                sent_string += unit_string + " [SEP]"
+                sent_string += rep_label + " [SEP]"
 
                 key = " ".join(tokens_lower) + " " + str(verb_pos)
                 if key not in all_instances_map:
                     all_instances_map[key] = []
                 all_instances_map[key].append(["DUR", sent_string, target_index, soft_label_indices, soft_label_values, mlm_labels])
-                print_str = ""
-                for iii, tok in enumerate(sent_string.split()):
-                    print_str += tok + "(" + str(iii) + ")" + " "
-                # print(print_str)
-                print_str = ""
-                for iii, tok in enumerate(mlm_labels):
-                    print_str += str(tok) + "(" + str(iii) + ")" + " "
+                # print_str = ""
+                # for iii, tok in enumerate(sent_string.split()):
+                #     print_str += tok + "(" + str(iii) + ")" + " "
+                # # print(print_str)
+                # print_str = ""
+                # for iii, tok in enumerate(mlm_labels):
+                #     print_str += str(tok) + "(" + str(iii) + ")" + " "
                 # print(print_str)
 
             if frequency_check != "NO_UNIT_FOUND" and frequency_check != "FOUND_UNIT_BUT_NOT_FREQUENCY" and frequency_check != "SKIP_DURATION":
-                unit_string = self.normalize_timex(frequency_check)
-                soft_label_indices, soft_label_values = self.get_soft_labels(unit_string)
+                unit_string = self.normalize_timex(frequency_check) + "_freq"
+                soft_label_indices, soft_label_values, rep_label = self.get_soft_labels(unit_string, tokenizer)
                 target_index = -1
                 if mask_mode:
-                    unit_string = "[MASK]"
+                    rep_label = "[MASK]"
                 sent_string = " ".join(prev_two_sents_tokens) + " [SEP] " + next_sent + " [SEP] [unused500] [unused502] "
                 if mask_mode:
                     target_index = len(sent_string.split())
-                sent_string += unit_string + " [SEP]"
+                sent_string += rep_label + " [SEP]"
 
                 key = " ".join(tokens_lower) + " " + str(verb_pos)
                 if key not in all_instances_map:
@@ -992,14 +1030,14 @@ class TmpArgDimensionFilter:
 
             if typical_check != "NO_TYPICAL_FOUND":
                 unit_string = typical_check
-                soft_label_indices, soft_label_values = self.get_soft_labels(unit_string)
+                soft_label_indices, soft_label_values, rep_label = self.get_soft_labels(unit_string, tokenizer)
                 target_index = -1
                 if mask_mode:
-                    unit_string = "[MASK]"
+                    rep_label = "[MASK]"
                 sent_string = " ".join(prev_two_sents_tokens) + " [SEP] " + next_sent + " [SEP] [unused500] [unused503] "
                 if mask_mode:
                     target_index = len(sent_string.split())
-                sent_string += unit_string + " [SEP]"
+                sent_string += rep_label + " [SEP]"
 
                 key = " ".join(tokens_lower) + " " + str(verb_pos)
                 if key not in all_instances_map:
@@ -1009,14 +1047,14 @@ class TmpArgDimensionFilter:
             if ordering_check != "NO_ORDERING_FOUND":
                 unit_string = ordering_check.split()[0]
                 content_string = " ".join(ordering_check.split()[1:])
-                soft_label_indices, soft_label_values = self.get_soft_labels(unit_string)
+                soft_label_indices, soft_label_values, rep_label = self.get_soft_labels(unit_string, tokenizer)
                 target_index = -1
                 if mask_mode:
-                    unit_string = "[MASK]"
+                    rep_label = "[MASK]"
                 sent_string = " ".join(prev_two_sents_tokens) + " [SEP] " + next_sent + " [SEP] [unused500] [unused504] "
                 if mask_mode:
                     target_index = len(sent_string.split())
-                sent_string += unit_string + " " + content_string + " [SEP]"
+                sent_string += rep_label + " " + content_string + " [SEP]"
 
                 key = " ".join(tokens_lower) + " " + str(verb_pos)
                 if key not in all_instances_map:
@@ -1024,15 +1062,15 @@ class TmpArgDimensionFilter:
                 all_instances_map[key].append(["ORD", sent_string, target_index, soft_label_indices, soft_label_values, mlm_labels])
 
             if boundary_check != "NO_BOUNDARY_FOUND":
-                unit_string = self.normalize_timex(boundary_check)
-                soft_label_indices, soft_label_values = self.get_soft_labels(unit_string)
+                unit_string = self.normalize_timex(boundary_check) + "_bnd"
+                soft_label_indices, soft_label_values, rep_label = self.get_soft_labels(unit_string, tokenizer)
                 target_index = -1
                 if mask_mode:
-                    unit_string = "[MASK]"
+                    rep_label = "[MASK]"
                 sent_string = " ".join(prev_two_sents_tokens) + " [SEP] " + next_sent + " [SEP] [unused500] [unused505] "
                 if mask_mode:
                     target_index = len(sent_string.split())
-                sent_string += unit_string + " [SEP]"
+                sent_string += rep_label + " [SEP]"
 
                 key = " ".join(tokens_lower) + " " + str(verb_pos)
                 if key not in all_instances_map:
@@ -1040,7 +1078,7 @@ class TmpArgDimensionFilter:
                 all_instances_map[key].append(["BND", sent_string, target_index, soft_label_indices, soft_label_values, mlm_labels])
 
         care_order = ["DUR", "ORD", "FREQ", "BND", "TYP"]
-        f_out = open("samples/gigaword/lm_format_small.txt", "w")
+        f_out = open("samples/gigaword/lm_format_full_correct.txt", "w")
         count_map = {}
         for key in all_instances_map:
             select = None

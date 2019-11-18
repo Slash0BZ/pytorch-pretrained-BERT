@@ -8,6 +8,7 @@ import torch
 import os
 import numpy as np
 from scipy.stats import norm
+from scripts import tmparg_processor
 
 
 class TemporalModelJointEval(BertPreTrainedModel):
@@ -142,12 +143,16 @@ def get_predictions():
 
 
 def get_question_type(question):
-    if "how long" in question.lower():
-        return "duration"
+    if "how long" in question.lower() or "how many years" in question.lower():
+        return "Event Duration"
     if "how often" in question.lower():
-        return "frequency"
-    if "when " in question.lower() or "what day" in question.lower() or "what time" in question.lower():
-        return "typical"
+        return "Frequency"
+    if "how many times" in question.lower():
+        return "Frequency"
+    if "what age" in question.lower() or "when " in question.lower() or "what day" in question.lower() or "what time" in question.lower() or "what year" in question.lower():
+        return "Typical Time"
+    if "which year" in question.lower():
+        return "Typical Time"
     return "unknown"
 
 
@@ -198,7 +203,7 @@ def normalize_timex(v_input, u):
     return prev_unit, new_val
 
 
-def decide_duration(answer, logits):
+def decide_duration(answer, tokenizer):
     logit_labels = {
         "seconds": 0,
         "minutes": 1,
@@ -253,7 +258,7 @@ def decide_duration(answer, logits):
         if t in others:
             expression = others[t]
     if (label == "NONE" or num_pos == -1) and expression is None:
-        return "no"
+        return None
     if expression is None:
         number = quantity(tokens[num_pos])
         if number is None:
@@ -262,31 +267,113 @@ def decide_duration(answer, logits):
         number = float(expression.split()[0])
         label = expression.split()[1]
     normed_u, normed_v = normalize_timex(number, label)
-    # art_data = []
-    # for l in range(0, len(logits)):
-    #     art_data += [l] * int(logits[l] / 0.001)
-    # fit_norm_mu, fit_norm_sig = norm.fit(np.array(art_data))
-    # value = logit_labels[normed_u] + (normed_v / advance_map[normed_u])
-    # prob = norm.pdf(value, loc=fit_norm_mu, scale=fit_norm_sig)
-    #
-    # prob = logits[logit_labels[normed_u]]
-    if normed_u == "centuries":
-        prob = logits[logit_labels[normed_u]]
-    else:
-        ratio = (normed_v / advance_map[normed_u])
-        prob = (1.0 - ratio) * logits[logit_labels[normed_u]] + ratio * logits[logit_labels[normed_u] + 1]
 
-    if prob > 0.2:
-        return "yes"
-    return "no"
+    return "[unused501] " + tokenizer.ids_to_tokens[logit_labels[normed_u] + 1]
 
 
-def decide_frequency(answer, logits):
-    return "no"
+def decide_frequency(answer, tokenizer, filter):
+    logit_labels = {
+        "seconds": 0,
+        "minutes": 1,
+        "hours": 2,
+        "days": 3,
+        "weeks": 4,
+        "months": 5,
+        "years": 6,
+        "decades": 7,
+        "centuries": 8,
+    }
+    check = filter.check_frequency_sentences(answer.split())
+    l = [43, 44, 45, 46, 47, 48, 49, 50, 51]
+    if check in ["SKIP_DURATION", "NO_UNIT_FOUND", "FOUND_UNIT_BUT_NOT_FREQUENCY"]:
+        return None
+    normed_u, _ = normalize_timex(float(check.split()[0]), check.split()[1])
+
+    return "[unused502] " + tokenizer.ids_to_tokens[l[logit_labels[normed_u]]]
 
 
-def decide_typical(answer, logits):
-    return "no"
+def decide_typical(answer, tokenizer, filter):
+    keywords = {
+        "dawns": [1, 0],
+        "mornings": [1, 1],
+        "noons": [1, 2],
+        "afternoons": [1, 3],
+        "evenings": [1, 4],
+        "dusks": [1, 5],
+        "nights": [1, 6],
+        "midnights": [1, 7],
+        "dawn": [1, 0],
+        "morning": [1, 1],
+        "noon": [1, 2],
+        "afternoon": [1, 3],
+        "evening": [1, 4],
+        "dusk": [1, 5],
+        "night": [1, 6],
+        "midnight": [1, 7],
+        "monday": [2, 0],
+        "tuesday": [2, 1],
+        "wednesday": [2, 2],
+        "thursday": [2, 3],
+        "friday": [2, 4],
+        "saturday": [2, 5],
+        "sunday": [2, 6],
+        "mondays": [2, 0],
+        "tuesdays": [2, 1],
+        "wednesdays": [2, 2],
+        "thursdays": [2, 3],
+        "fridays": [2, 4],
+        "saturdays": [2, 5],
+        "sundays": [2, 6],
+        "january": [3, 0],
+        "february": [3, 1],
+        "march": [3, 2],
+        "april": [3, 3],
+        "may": [3, 4],
+        "june": [3, 5],
+        "july": [3, 6],
+        "august": [3, 7],
+        "september": [3, 8],
+        "october": [3, 9],
+        "november": [3, 10],
+        "december": [3, 11],
+        "januarys": [3, 0],
+        "januaries": [3, 0],
+        "februarys": [3, 1],
+        "februaries": [3, 1],
+        "marches": [3, 2],
+        "marchs": [3, 2],
+        "aprils": [3, 3],
+        "mays": [3, 4],
+        "junes": [3, 5],
+        "julys": [3, 6],
+        "julies": [3, 6],
+        "augusts": [3, 7],
+        "septembers": [3, 8],
+        "octobers": [3, 9],
+        "novembers": [3, 10],
+        "decembers": [3, 11],
+        "springs": [4, 0],
+        "summers": [4, 1],
+        "autumns": [4, 2],
+        "falls": [4, 2],
+        "winters": [4, 3],
+        "spring": [4, 0],
+        "summer": [4, 1],
+        "autumn": [4, 2],
+        "fall": [4, 2],
+        "winter": [4, 3],
+    }
+    vocab_indices = {
+        1: [10, 11, 12, 13, 14, 15, 16, 17],
+        2: [18, 19, 20, 21, 22, 23, 24],
+        3: [25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36],
+        4: [37, 38, 39, 40],
+    }
+    check = filter.check_typical_sentences(answer.split())
+    unit, group = check
+    if unit == "NO_TYPICAL_FOUND":
+        return None
+    return "[unused503] " + tokenizer.ids_to_tokens[vocab_indices[group][keywords[unit][1]]]
 
 
 def get_answer_predictions():
@@ -363,4 +450,43 @@ def print_argmax_outputs():
         f_out.write("\t".join(out_content) + "\n")
 
 
-get_answer_predictions()
+def transform_files():
+    source_lines = [x.strip() for x in open("samples/unsupervised_mctaco/test.tsv").readlines()]
+    total = 0.0
+    correct = 0.0
+    filter = tmparg_processor.TmpArgDimensionFilter()
+    tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
+    f_out = open("samples/split_30_70_marked/test.txt", "w")
+    for line in source_lines:
+        groups = line.split("\t")
+        sentence = groups[0]
+        question = groups[1]
+        answer = groups[2]
+        question_key = question.replace(" ", "").lower()
+        gold_question_type = groups[-1]
+        question_type = get_question_type(question)
+        additional_string = ""
+        if question_type == "Event Duration":
+            additional_string = decide_duration(answer, tokenizer)
+        if question_type == "Frequency":
+            additional_string = decide_frequency(answer, tokenizer, filter)
+        if question_type == "Typical Time":
+            additional_string = decide_typical(answer, tokenizer, filter)
+        if additional_string is None:
+            additional_string = ""
+        answer += " " + additional_string
+        f_out.write(sentence + "\t" + question + "\t" + answer + "\t" + groups[-2] + "\n")
+
+
+
+    #     if gold_question_type in ["Event Duration", "Frequency", "Typical Time"]:
+    #         type_total += 1.0
+    #         if question_type == gold_question_type:
+    #             type_correct += 1.0
+    #         else:
+    #             print(question)
+    #             print(question_type)
+    #             print(gold_question_type)
+    # print(type_correct / type_total)
+
+transform_files()

@@ -1990,3 +1990,27 @@ class BertForQuestionAnswering(BertPreTrainedModel):
             return total_loss
         else:
             return start_logits, end_logits
+
+
+class BertBoundary(BertPreTrainedModel):
+    def __init__(self, config, num_labels):
+        super(BertBoundary, self).__init__(config)
+        self.num_labels = num_labels
+        self.bert = BertModel(config)
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+
+        self.apply(self.init_bert_weights)
+        self.classifier = nn.Linear(config.hidden_size, 4)
+
+        self.lm_loss_fn = CrossEntropyLoss(ignore_index=-1)
+
+    def forward(self, input_ids, token_type_ids, attention_mask, lm_labels=None):
+        seq_output, target_all_output = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False)
+        pooled_output = self.dropout(target_all_output)
+        logits = self.classifier(pooled_output)
+
+        loss = self.lm_loss_fn(logits.view(-1, 4), lm_labels.view(-1))
+        if lm_labels is None:
+            return logits
+        else:
+            return loss

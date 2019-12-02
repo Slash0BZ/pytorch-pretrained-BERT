@@ -24,6 +24,7 @@ import os
 import random
 import sys
 import math
+import operator
 
 import numpy as np
 import torch
@@ -60,7 +61,7 @@ class InputExample(object):
 
 class InputFeatures(object):
 
-    def __init__(self, input_ids, input_mask, segment_ids, lm_labels, target_idx, soft_label_indices, soft_label_values):
+    def __init__(self, input_ids, input_mask, segment_ids, lm_labels, target_idx, soft_label_indices, soft_label_values, adjustments, non_zero_adjustments):
         self.input_ids = input_ids
         self.input_mask = input_mask
         self.segment_ids = segment_ids
@@ -68,6 +69,8 @@ class InputFeatures(object):
         self.target_idx = target_idx
         self.soft_label_indices = soft_label_indices
         self.soft_label_values = soft_label_values
+        self.adjustments = adjustments
+        self.non_zero_adjustments = non_zero_adjustments
 
 
 class DataProcessor(object):
@@ -244,11 +247,28 @@ def convert_examples_to_features(examples, max_seq_length, tokenizer):
         target_idx = example.target_idx
         if target_idx == -1:
             target_idx = 0
-            example.soft_label_indices = [101] + list(range(50, 61))
-            example.soft_label_values = [1.0] + [0.0] * 11
+            # example.soft_label_indices = [101] + list(range(50, 61))
+            # example.soft_label_values = [1.0] + [0.0] * 11
 
         assert len(example.soft_label_indices) == 12
         assert len(example.soft_label_values) == 12
+
+        adjustment_map = {0: 0.0, 1: 5.632822928936003, 2: 3.280018289894833, 3: 1.976306581811169, 4: 2.41455451210071, 5: 2.223275995660933, 6: 0.713238876460353, 7: 0.9991781928600281, 8: 0.3391678486997636, 9: 0.5566730300631684, 10: 10.656937470649856, 11: 1.3678253914898055, 12: 8.671202880446762, 13: 2.2282006933482372, 14: 3.2485561226456126, 15: 14.928070841239721, 16: 0.8596012249381557, 17: 8.027537040312376, 18: 0.32343138802645194, 19: 0.3115614719689089, 20: 0.3142051360700714, 21: 0.3189919104795053, 22: 0.334863215795152, 23: 0.49039705046327536, 24: 0.46590840895380015, 25: 1.6343199658750338, 26: 2.0540999700605056, 27: 1.3152712544109353, 28: 1.4416974945145162, 29: 1.5247368679468591, 30: 1.3231345375447094, 31: 1.4121746789271883, 32: 2.108484582096006, 33: 1.8090761641080357, 34: 1.8870999724946107, 35: 1.9069522415169466, 36: 1.792549474720347, 37: 4.990375019030059, 38: 2.813910455733389, 39: 5.781679927879904, 40: 8.538936887653945, 41: 0.7095070844621323, 42: 1.9171399265817317, 61: 1.3496716377069367, 62: 0.7529896443807408, 43: 4.122109988776655, 44: 3.429318394024276, 45: 3.000653594771242, 46: 3.072958500669344, 47: 0.4423248307922056, 48: 0.7151925848035207, 49: 1.6752417442072614, 50: 0.33000880550613687, 51: 1.91951499947737, 52: 2.9728089556635737, 53: 2.9607722324912715, 54: 4.259507829977629, 55: 5.2272468272468275, 56: 0.8849600982197668, 57: 0.4307398111629019, 58: 2.579154526401881, 59: 0.2689158039200011, 60: 2.925239875931241}
+
+        actual_label = -1
+        max_val = 0.0
+        for it in range(0, len(example.soft_label_indices)):
+            if example.soft_label_values[it] > max_val:
+                actual_label = example.soft_label_indices[it]
+                max_val = example.soft_label_values[it]
+
+        non_zero_adjustments = adjustment_map[actual_label]
+
+        if target_idx == 0 or target_idx == -1:
+            actual_label = 0
+
+        adjustments = adjustment_map[actual_label]
+
 
         if ex_index < 100:
             logger.info("*** Example ***")
@@ -268,6 +288,8 @@ def convert_examples_to_features(examples, max_seq_length, tokenizer):
                 target_idx=target_idx,
                 soft_label_indices=example.soft_label_indices,
                 soft_label_values=example.soft_label_values,
+                adjustments=adjustments,
+                non_zero_adjustments=non_zero_adjustments,
             )
         )
     return features
@@ -296,14 +318,22 @@ def compute_metrics(task_name, preds, labels, additional=None):
         raise KeyError(task_name)
 
 
-def soft_cross_entropy_loss(logits, soft_indices, soft_values, lm_loss):
+def soft_cross_entropy_loss(logits, soft_indices, soft_values, lm_loss, adjustments=None, non_zero_adjustments=None):
     soft_target = torch.zeros(logits.size(0), logits.size(1)).cuda()
     for x in range(soft_target.size(0)):
         soft_target[x, soft_indices[x]] = soft_values[x]
     loss = -soft_target * torch.log(nn.functional.softmax(logits, -1))
-    loss_a = torch.sum(loss, -1)
+    loss = torch.sum(loss, -1)
+    lm_loss = lm_loss.view(-1, 128)
 
-    mean_loss = loss_a.mean()
+    non_zero_adjustments = non_zero_adjustments.view(-1, 1).repeat(1, 128)
+    if adjustments is not None:
+        loss = loss * adjustments
+        lm_loss = lm_loss * non_zero_adjustments
+
+    lm_loss = lm_loss.view(-1).sum() / torch.nonzero(lm_loss.view(-1).data).size(0)
+
+    mean_loss = loss.mean()
 
     if lm_loss is not None:
         return mean_loss + lm_loss, mean_loss.item()
@@ -318,7 +348,7 @@ def compute_distance(logits, target):
         2: [18, 19, 20, 21, 22, 23, 24],
         3: [25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36],
         4: [37, 38, 39, 40],
-        5: [41, 42],
+        5: [41, 42, 61, 62],
         6: [43, 44, 45, 46, 47, 48, 49, 50, 51],
         7: [52, 53, 54, 55, 56, 57, 58, 59, 60],
     }
@@ -573,10 +603,12 @@ def main():
         all_target_idxs = torch.tensor([f.target_idx for f in train_features], dtype=torch.long)
         all_soft_label_indices = torch.tensor([f.soft_label_indices for f in train_features], dtype=torch.long)
         all_soft_label_values = torch.tensor([f.soft_label_values for f in train_features], dtype=torch.float)
+        all_adjustments = torch.tensor([f.adjustments for f in train_features], dtype=torch.float)
+        all_non_zero_adjustments = torch.tensor([f.non_zero_adjustments for f in train_features], dtype=torch.float)
 
         train_data = TensorDataset(
             all_input_ids, all_input_mask, all_segment_ids, all_lm_labels,
-            all_target_idxs, all_soft_label_indices, all_soft_label_values,
+            all_target_idxs, all_soft_label_indices, all_soft_label_values, all_adjustments, all_non_zero_adjustments
         )
         if args.local_rank == -1:
             train_sampler = RandomSampler(train_data)
@@ -602,7 +634,7 @@ def main():
                     epoch_label_loss = 0.0
 
                 batch = tuple(t.to(device) for t in batch)
-                input_ids, input_mask, segment_ids, lm_labels, target_ids, soft_label_indices, soft_label_values = batch
+                input_ids, input_mask, segment_ids, lm_labels, target_ids, soft_label_indices, soft_label_values, adjustments, non_zero_adjustments = batch
 
                 lm_loss, cls = model(
                     input_ids, segment_ids, input_mask, lm_labels, target_ids,
@@ -611,7 +643,7 @@ def main():
                 loss, non_lm_loss = soft_cross_entropy_loss(
                     cls.view(-1, 30522),
                     soft_label_indices, soft_label_values,
-                    lm_loss
+                    lm_loss, adjustments, non_zero_adjustments,
                 )
 
                 if n_gpu > 1:

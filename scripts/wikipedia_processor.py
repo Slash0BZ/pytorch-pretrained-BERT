@@ -2,6 +2,8 @@ import re
 import os
 from bs4 import BeautifulSoup
 from spacy.lang.en import English
+from hanziconv import HanziConv
+import time
 import random
 import json
 
@@ -252,10 +254,10 @@ class WikipediaExtractor:
 class TokenizationProcessor:
 
     def __init__(self):
-        self.lines = [x.strip() for x in open("samples/gigaword/raw_collection_randsent_contextsent.txt").readlines()]
+        self.lines = [x.strip() for x in open("samples/gigaword/raw_collection_randsent_contextsent_additional.txt").readlines()]
         self.nlp = English()
         self.nlp.add_pipe(self.nlp.create_pipe('sentencizer'))
-        self.f_out = open("samples/gigaword/raw_collection_randsent_contextsent_tokenized.txt", "w")
+        self.f_out = open("samples/gigaword/raw_collection_additional_tokenized.txt", "w")
         self.process()
 
     def process(self):
@@ -286,23 +288,32 @@ class MultiLingualLinker:
     def __init__(self):
         self.idmap_source = {
             "fr": "/shared/wikipedia/processed/idmap/fr2entitles",
+            "de": "/shared/wikipedia/processed/idmap/de2entitles",
+            "ja": "/shared/wikipedia/processed/idmap/ja2entitles",
+            "zh": "/shared/wikipedia/processed/idmap/zh2entitles",
         }
         self.idmap = {}
-        self.build_idmap(['fr'])
+        self.build_idmap(['fr', 'de', 'ja', 'zh'])
         self.target_source = {
             "en": "samples/linking/en",
-            "fr": "samples/linking/fr"
+            "fr": "samples/linking/fr",
+            "de": "samples/linking/de",
+            "ja": "samples/linking/ja",
+            "zh": "samples/linking/zh",
         }
         self.target_list = {}
-        self.build_target_list(['en', 'fr'])
+        self.build_target_list(['en', 'fr', 'de', 'ja', 'zh'])
         self.outputs = {}
         self.source_path = {
             "en": "/shared/wikipedia/processed/enlink_in_pages",
-            # "fr": "/shared/wikipedia/processed/frlink_in_pages",
+            "fr": "/shared/wikipedia/processed/frlink_in_pages",
+            "de": "/shared/wikipedia/processed/delink_in_pages",
+            "ja": "/shared/wikipedia/processed/jalink_in_pages",
+            "zh": "/shared/wikipedia/processed/zhlink_in_pages",
         }
         self.nlp = English()
         self.nlp.add_pipe(self.nlp.create_pipe('sentencizer'))
-        self.build_outputs(['en'])
+        self.build_outputs(['fr', 'de', 'ja', 'zh'])
 
     def build_idmap(self, langs):
         for lang in langs:
@@ -325,6 +336,7 @@ class MultiLingualLinker:
 
     def build_outputs(self, langs):
         for lang in langs:
+            print(lang)
             if lang not in self.outputs:
                 self.outputs[lang] = []
             all_file_paths = set()
@@ -337,74 +349,56 @@ class MultiLingualLinker:
                                 continue
                             all_file_paths.add(s_path + "/" + dir + "/" + file)
             all_file_paths = list(all_file_paths)
+            seen_set = set()
+            count = 0
             for i, file_path in enumerate(all_file_paths):
                 if i % 10 == 0:
-                    print(float(i) / float(len(all_file_paths)))
+                    pass
+                    # print(float(i) / float(len(all_file_paths)))
                 with open(file_path) as json_file:
                     data = json.load(json_file)
                 for obj in data:
                     text = obj['text']
-                    doc = self.nlp(text)
-                    tokens = []
-                    for t in doc:
-                        tokens.append([str(t), t.idx])
-                    st = ""
-                    for surf, idx in tokens:
-                        st += surf + "(" + str(idx) + ")" + " "
-                    tokens_rep = [t[0] for t in tokens]
+                    if lang in ['zh']:
+                        text = HanziConv.toSimplified(text)
+                    if len(text) < 10 or len(text.split()) < 5:
+                        continue
                     spans = obj['linked_spans']
-                    reverse_map = {}
-                    for k in enumerate(tokens):
-                        reverse_map[k[1][1]] = k[0]
+                    span_map = {}
+                    skip_map = set()
                     for span in spans:
                         start = span['start']
                         end = span['end']
-                        tok_start = -1
-                        tok_end = -1
-                        if start in reverse_map:
-                            tok_start = reverse_map[start]
-                        else:
-                            for ii in range(1, 10):
-                                if start + ii in reverse_map:
-                                    tok_start = reverse_map[start + ii]
-                                    break
-                                if start - ii in reverse_map:
-                                    tok_start = reverse_map[start - ii]
-                                    break
-                        if end in reverse_map:
-                            tok_end = reverse_map[end]
-                        else:
-                            for ii in range(1, 25):
-                                if end + ii in reverse_map:
-                                    tok_end = reverse_map[end + ii]
-                                    break
-                        # if tok_start == -1 or tok_end == -1:
-                        #     print(st)
-                        #     print(str(start) + " " + str(end))
-                        start = tok_start
-                        end = tok_end
 
-                        tokens_rep[start] = "[[" + tokens_rep[start] + "]]"
-                        tokens_rep[end - 1] = "{{" + tokens_rep[end - 1] + "}}"
-
-                        # title = span['label']
+                        title = span['label']
                         # if lang != "en":
                         #     if title not in self.idmap[lang]:
                         #         continue
                         #     title = self.idmap[lang][title]
-                        # if title.lower() in self.target_list[lang]:
-                        #     tokens_rep[start] = title.lower()
-                        #     for i in range(start+1, end):
-                        #         tokens_rep[i] = "DELETE"
-                    new_tokens = []
-                    for t in tokens_rep:
-                        if t == "\t":
-                            new_tokens.append(" ")
+                        sub_title = "SHOULD_NEVER_EXIST_IN_LIST"
+                        if lang in ['fr', 'de']:
+                            title = title.lower()
+                        if lang in ['zh']:
+                            sub_title = title
+                            title = HanziConv.toSimplified(title)
+                        if title in self.target_list[lang] or sub_title in self.target_list[lang]:
+                            count += 1
+                            seen_set.add(title.lower())
+                            span_map[start] = title
+                            for ii in range(start, end):
+                                skip_map.add(ii)
+
+                    concat = ""
+                    for c in range(0, len(text)):
+                        if c in span_map:
+                            concat += span_map[c]
+                        if c in skip_map:
+                            continue
                         else:
-                            new_tokens.append(t)
-                        # if t != "DELETE":
-                        #     new_tokens.append(t)
-                    self.outputs[lang].append(" ".join(new_tokens))
+                            concat += text[c]
+                    self.outputs[lang].append(concat.strip())
+            print(len(seen_set))
+            print(count)
 
     def save(self, output_path):
         for lang in self.outputs:
@@ -420,5 +414,33 @@ class MultiLingualLinker:
 # extractor.process_path("/shared/wikipedia/processed/enwiki_with_links", "samples/wikipedia/raw_collection_randomsent_contextsent.txt")
 # p = TokenizationProcessor()
 # r = Randomizer()
-m = MultiLingualLinker()
-m.save("samples/linking/span")
+# m = MultiLingualLinker()
+# m.save("samples/linking/span")
+
+def filter_raw():
+    lines = [x.strip() for x in open("samples/boundary_data/train.formatted.txt")]
+    nlp = English()
+    nlp.add_pipe(nlp.create_pipe('sentencizer'))
+    len_lines = float(len(lines))
+    start_time = time.time()
+    f_out = open("samples/boundary_data/train.formatted.txt.tmp", "w")
+    for i, line in enumerate(lines):
+        if i % 100000 == 0:
+            elapsed = time.time() - start_time
+            avg_time = elapsed / 100000.0
+            need_time = float(len_lines - i) * avg_time
+            print("Avg Time: " + str(avg_time) + " seconds")
+            print("Need: " + str(need_time) + " seconds")
+            start_time = time.time()
+        if len(line.split()) < 5:
+            continue
+        doc = nlp(line)
+        for sent in doc.sents:
+            sent = str(sent)
+            if "[[" not in sent and "{{" not in sent:
+                continue
+            f_out.write(sent + "\n")
+
+
+# filter_raw()
+

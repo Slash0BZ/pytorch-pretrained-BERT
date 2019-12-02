@@ -14,9 +14,11 @@ class McTacoEvaluator:
         self.output_file = output_file
         self.output = output
 
-    def print_result(self):
-        ref_lines = [x.strip() for x in open(self.test_file).readlines()]
-        prediction_lines = [x.strip() for x in open(self.output_file).readlines()]
+    def print_result(self, ref_lines=None, prediction_lines=None):
+        if ref_lines is None:
+            ref_lines = [x.strip() for x in open(self.test_file).readlines()]
+        if prediction_lines is None:
+            prediction_lines = [x.strip() for x in open(self.output_file).readlines()]
 
         result_map = {}
         prediction_count_map = {}
@@ -69,12 +71,12 @@ class McTacoEvaluator:
             if val:
                 correct += 1.0
                 type_correct[type] += 1.0
-            else:
-                if type == "Event Duration":
-                    print(context_map[question])
-                    for i in range(0, len(answer_map[question])):
-                        print(answer_map[question][i] + "\t" + prediction_map[question][i] + "\t" + str(result_map[question][i]))
-                    print()
+            # else:
+            #     if type == "Event Duration":
+            #         print(context_map[question])
+            #         for i in range(0, len(answer_map[question])):
+            #             print(answer_map[question][i] + "\t" + prediction_map[question][i] + "\t" + str(result_map[question][i]))
+            #         print()
             type_total[type] += 1.0
             p = 1.0
             if prediction_count_map[question] > 0.0:
@@ -85,10 +87,11 @@ class McTacoEvaluator:
             if p + r > 0.0:
                 f1 += 2 * p * r / (p + r)
 
-        print("Strict Acc.: " + str(correct / total))
-        print("Avg F1: " + str(f1 / total))
-        for type in type_total:
-            print(type + " EM: " + str(type_correct[type] / type_total[type]))
+        # print("Strict Acc.: " + str(correct / total))
+        # print("Avg F1: " + str(f1 / total))
+        # for type in type_total:
+        #     print(type + " EM: " + str(type_correct[type] / type_total[type]))
+        #     pass
 
         if self.output:
             print("Writing results to file: %s" % self.output)
@@ -97,6 +100,7 @@ class McTacoEvaluator:
                     "em": correct / total,
                     "f1": f1 / total
                 }))
+        return correct / total
 
     def print_errors(self):
         pass

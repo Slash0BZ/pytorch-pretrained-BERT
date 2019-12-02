@@ -127,7 +127,7 @@ class TemporalVerbProcessor(DataProcessor):
             text = " ".join(text_tokens)
             target_idx_a = 0
             target_idx_b = 0
-            label = groups[-1]
+            label = groups[4]
 
             examples.append(
                 InputExample(
@@ -723,7 +723,9 @@ def main():
         model.eval()
 
         output_file = os.path.join(args.output_dir, "bert_logits.txt")
+        logits_file = os.path.join(args.output_dir, "bert_outputs.txt")
         f_out = open(output_file, "a+")
+        f_logits_out = open(logits_file, "w")
         correct_map = {}
         predicted_map = {}
         labeled_map = {}
@@ -735,6 +737,9 @@ def main():
                 logits = model(
                     input_ids, segment_ids, input_mask, target_ids_a, target_ids_b
                 )
+            logits_np = logits.view(-1, 4).cpu().numpy()
+            for ii in range(0, logits_np.shape[0]):
+                f_logits_out.write("\t".join([str(x) for x in list(logits_np[ii])]) + "\n")
             correct_map = combine_map(correct_map, compute_distance(logits.view(-1, 4).cpu().numpy(), labels.cpu().numpy())[0])
             predicted_map = combine_map(predicted_map, compute_distance(logits.view(-1, 4).cpu().numpy(), labels.cpu().numpy())[1])
             labeled_map = combine_map(labeled_map, compute_distance(logits.view(-1, 4).cpu().numpy(), labels.cpu().numpy())[2])

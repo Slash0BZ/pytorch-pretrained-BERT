@@ -1412,18 +1412,15 @@ class TemporalModelArguments(BertPreTrainedModel):
         self.cls = BertOnlyMLMHead(config, self.bert.embeddings.word_embeddings.weight)
         self.apply(self.init_bert_weights)
 
-        self.lm_loss_fn = CrossEntropyLoss(ignore_index=-1)
-
-    def compute_lm_loss(self, cls_output, labels):
-        if labels is None:
-            return None
-        lm_loss = self.lm_loss_fn(cls_output.view(-1, 30522), labels.view(-1))
-        return lm_loss
+        self.lm_loss_fn = CrossEntropyLoss(ignore_index=-1, reduction="none")
 
     def forward(self, input_ids, token_type_ids, attention_mask, lm_labels, target_ids):
         sequence_output, pooled_output = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False)
         prediction_scores = self.cls(sequence_output)
-        masked_lm_loss = self.lm_loss_fn(prediction_scores.view(-1, self.config.vocab_size), lm_labels.view(-1))
+        if lm_labels is not None:
+            masked_lm_loss = self.lm_loss_fn(prediction_scores.view(-1, self.config.vocab_size), lm_labels.view(-1))
+        else:
+            masked_lm_loss = None
         ret_cls = prediction_scores.gather(1, target_ids.view(-1, 1).unsqueeze(2).repeat(1, 1, prediction_scores.size(2)))
 
         return masked_lm_loss, ret_cls
@@ -1993,7 +1990,7 @@ class BertForQuestionAnswering(BertPreTrainedModel):
 
 
 class BertBoundary(BertPreTrainedModel):
-    def __init__(self, config, num_labels):
+    def __init__(self, config, num_labels=4):
         super(BertBoundary, self).__init__(config)
         self.num_labels = num_labels
         self.bert = BertModel(config)
@@ -2006,11 +2003,11 @@ class BertBoundary(BertPreTrainedModel):
 
     def forward(self, input_ids, token_type_ids, attention_mask, lm_labels=None):
         seq_output, target_all_output = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False)
-        pooled_output = self.dropout(target_all_output)
+        pooled_output = self.dropout(seq_output)
         logits = self.classifier(pooled_output)
 
-        loss = self.lm_loss_fn(logits.view(-1, 4), lm_labels.view(-1))
         if lm_labels is None:
             return logits
         else:
+            loss = self.lm_loss_fn(logits.view(-1, 4), lm_labels.view(-1))
             return loss

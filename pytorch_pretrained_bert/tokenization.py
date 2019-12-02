@@ -109,9 +109,10 @@ class BertTokenizer(object):
         token_end_ids = []
         if self.do_basic_tokenize:
           split_tokens = []
+          # for token in whitespace_tokenize(text):
           for token in self.basic_tokenizer.tokenize(text):
               if "[[" in token and "]]" in token:
-                  token_start_id = len(split_tokens) + 1
+                  token_start_id = len(split_tokens)
                   token_start_ids.append(token_start_id)
                   token = token.replace("[[", "")
                   token = token.replace("]]", "")
@@ -401,6 +402,9 @@ def _is_punctuation(char):
     # Characters such as "^", "$", and "`" are not in the Unicode
     # Punctuation class but we treat them as punctuation anyways, for
     # consistency.
+    return False
+    # if char in ["[", "]", "{", "}"]:
+    #     return False
     if ((cp >= 33 and cp <= 47) or (cp >= 58 and cp <= 64) or
             (cp >= 91 and cp <= 96) or (cp >= 123 and cp <= 126)):
         return True

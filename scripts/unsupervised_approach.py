@@ -8,7 +8,9 @@ import torch
 import os
 import numpy as np
 from scipy.stats import norm
-from scripts import tmparg_processor
+# from scripts import tmparg_processor
+from spacy.lang.en import English
+from scripts import mctaco_evaluator
 
 
 class TemporalModelJointEval(BertPreTrainedModel):
@@ -110,7 +112,7 @@ def get_stripped(tokens, tags, orig_verb_pos):
 def process_dev_question():
     lines = [x.strip() for x in open("samples/unsupervised_mctaco/dev_questions_srl.jsonl").readlines()]
     reader = jsonlines.Reader(lines)
-    f_out = open("samples/unsupervised_mctaco/dev_questions_mapping.txt", "w")
+    f_out = open("samples/unsupervised_mctaco/dev_questions_mapping_fullsent.txt", "w")
     for obj_list in reader:
         for obj in obj_list:
             max_verb_pos = -1
@@ -124,6 +126,7 @@ def process_dev_question():
                 continue
             print(max_verb)
             stripped_tokens, verb_pos = get_stripped(obj['words'], max_verb['tags'], max_verb_pos)
+            # f_out.write(" ".join(obj['words']) + "\t" + " ".join(obj['words']) + "\t" + str(max_verb_pos) + "\n")
             f_out.write(" ".join(obj['words']) + "\t" + " ".join(stripped_tokens) + "\t" + str(verb_pos) + "\n")
 
 
@@ -149,11 +152,21 @@ def get_question_type(question):
         return "Frequency"
     if "how many times" in question.lower():
         return "Frequency"
-    if "what age" in question.lower() or "when " in question.lower() or "what day" in question.lower() or "what time" in question.lower() or "what year" in question.lower():
+    if "what age" in question.lower() or "when " in question.lower() or "what day" in question.lower() or "what time" in question.lower() or "what year" in question.lower() or "what month" in question.lower():
         return "Typical Time"
     if "which year" in question.lower():
         return "Typical Time"
-    return "unknown"
+    if "what happened" in question.lower():
+        return "Event Ordering"
+    if "what happenes" in question.lower() or "what will" in question.lower():
+        return "Event Ordering"
+    if "afterwards" in question.lower():
+        return "Event Ordering"
+    if "do next" in question.lower() or "do after" in question.lower():
+        return "Event Ordering"
+    if "before" in question.lower() or "after" in question.lower():
+        return "Event Ordering"
+    return "Stationarity"
 
 
 def get_trivial_floats(s):
@@ -203,7 +216,7 @@ def normalize_timex(v_input, u):
     return prev_unit, new_val
 
 
-def decide_duration(answer, tokenizer):
+def decide_duration(answer, tokenizer, single_mode=False):
     logit_labels = {
         "seconds": 0,
         "minutes": 1,
@@ -268,7 +281,9 @@ def decide_duration(answer, tokenizer):
         label = expression.split()[1]
     normed_u, normed_v = normalize_timex(number, label)
 
-    return "[unused501] " + tokenizer.ids_to_tokens[logit_labels[normed_u] + 1]
+    if single_mode:
+        return logit_labels[normed_u]
+    return "[unused500] [unused501] " + tokenizer.ids_to_tokens[logit_labels[normed_u] + 1] + " "
 
 
 def decide_frequency(answer, tokenizer, filter):
@@ -289,7 +304,7 @@ def decide_frequency(answer, tokenizer, filter):
         return None
     normed_u, _ = normalize_timex(float(check.split()[0]), check.split()[1])
 
-    return "[unused502] " + tokenizer.ids_to_tokens[l[logit_labels[normed_u]]]
+    return "[unused500] [unused502] " + tokenizer.ids_to_tokens[l[logit_labels[normed_u]]] + " "
 
 
 def decide_typical(answer, tokenizer, filter):
@@ -373,7 +388,18 @@ def decide_typical(answer, tokenizer, filter):
     unit, group = check
     if unit == "NO_TYPICAL_FOUND":
         return None
-    return "[unused503] " + tokenizer.ids_to_tokens[vocab_indices[group][keywords[unit][1]]]
+    return "[unused500] [unused503] " + tokenizer.ids_to_tokens[vocab_indices[group][keywords[unit][1]]] + " "
+
+
+def decide_ordering(question):
+    status = "after"
+    for t in question.lower().split():
+        if t in ["before"]:
+            status = "before"
+            break
+    if status == "after":
+        return "[unused500] [unused504] [unused41] "
+    return "[unused500] [unused504] [unused42] "
 
 
 def get_answer_predictions():
@@ -451,12 +477,12 @@ def print_argmax_outputs():
 
 
 def transform_files():
-    source_lines = [x.strip() for x in open("samples/unsupervised_mctaco/test.tsv").readlines()]
+    source_lines = [x.strip() for x in open("samples/unsupervised_mctaco/dev.tsv").readlines()]
     total = 0.0
     correct = 0.0
     filter = tmparg_processor.TmpArgDimensionFilter()
     tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
-    f_out = open("samples/split_30_70_marked/test.txt", "w")
+    f_out = open("samples/split_30_70_marked/dev.txt", "w")
     for line in source_lines:
         groups = line.split("\t")
         sentence = groups[0]
@@ -465,17 +491,33 @@ def transform_files():
         question_key = question.replace(" ", "").lower()
         gold_question_type = groups[-1]
         question_type = get_question_type(question)
+        if gold_question_type == question_type:
+            correct += 1.0
+        else:
+            print(question)
+            print(gold_question_type)
+            print(question_type)
+            print()
+        total += 1.0
         additional_string = ""
         if question_type == "Event Duration":
             additional_string = decide_duration(answer, tokenizer)
+            if additional_string is not None:
+                answer = additional_string + answer
         if question_type == "Frequency":
             additional_string = decide_frequency(answer, tokenizer, filter)
+            if additional_string is not None:
+                answer = additional_string + answer
         if question_type == "Typical Time":
             additional_string = decide_typical(answer, tokenizer, filter)
-        if additional_string is None:
-            additional_string = ""
-        answer += " " + additional_string
+            if additional_string is not None:
+                answer = additional_string + answer
+        if question_type == "Event Ordering":
+            additional_string = decide_ordering(question)
+            answer = additional_string + answer
         f_out.write(sentence + "\t" + question + "\t" + answer + "\t" + groups[-2] + "\n")
+
+    print(correct / total)
 
 
 
@@ -489,4 +531,126 @@ def transform_files():
     #             print(gold_question_type)
     # print(type_correct / type_total)
 
-transform_files()
+def transform_duration_seq():
+    srl_map_lines = [x.strip() for x in open("samples/unsupervised_mctaco/dev_questions_mapping.txt").readlines()]
+    srl_map = {}
+    for l in srl_map_lines:
+        key = l.split("\t")[0].replace(" ", "")
+        new_tokens = l.split("\t")[1].split()
+        new_tokens.insert(int(l.split("\t")[2]), "[unused500]")
+        srl_map[key] = " ".join(new_tokens)
+
+    nlp = English()
+    nlp.add_pipe(nlp.create_pipe('sentencizer'))
+
+    f_out = open("samples/unsupervised_mctaco/dev_mapped_seq.txt", 'w')
+    all_q = set()
+    for line in [x.strip() for x in open("samples/unsupervised_mctaco/dev.tsv").readlines()]:
+        group = line.split("\t")
+        if group[-1] != "Event Duration":
+            continue
+
+        sentence = group[0]
+        doc = nlp(sentence)
+        doc_tokens = []
+        for tt in doc:
+            doc_tokens.append(str(tt))
+        question = group[1].replace(" ", "")
+        question = srl_map[question]
+
+        seq = "[CLS] " + " ".join([x.lower() for x in doc_tokens]) + " " + question.lower() + " [SEP] [unused500] [unused501] [MASK] [SEP]"
+        all_q.add(seq)
+    for seq in all_q:
+        f_out.write(seq + "\t" + str(len(seq.split()) - 2) + "\n")
+
+
+def calculate_duration_performance(threshold):
+    evaluator = mctaco_evaluator.McTacoEvaluator("../MCTACO/dataset/dev_3783.tsv", "", False)
+    srl_map_lines = [x.strip() for x in open("samples/unsupervised_mctaco/dev_questions_mapping.txt").readlines()]
+    srl_map = {}
+    for l in srl_map_lines:
+        key = l.split("\t")[0].replace(" ", "")
+        new_tokens = l.split("\t")[1].split()
+        new_tokens.insert(int(l.split("\t")[2]), "[unused500]")
+        srl_map[key] = " ".join(new_tokens)
+
+    result_map = {}
+    result_lines = [x.strip() for x in open("samples/unsupervised_mctaco/dev_mapped_seq_results.txt").readlines()]
+    surface_lines = [x.strip() for x in open("samples/unsupervised_mctaco/dev_mapped_seq.txt").readlines()]
+    tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
+
+    for i, l in enumerate(result_lines):
+        result_map[surface_lines[i].split("\t")[0].replace(" ", "").lower()] = [float(x) for x in l.split("\t")]
+
+    out_labels = []
+    for line in [x.strip() for x in open("samples/unsupervised_mctaco/dev.tsv").readlines()]:
+        group = line.split("\t")
+        if group[-1] != "Event Duration":
+            out_labels.append("no")
+            continue
+        sentence = group[0]
+        question = group[1].replace(" ", "")
+        question = srl_map[question]
+        key = "[CLS]" + sentence + question + "[SEP] [unused500] [unused501] [MASK] [SEP]"
+        # print(key)
+        # print(group[2])
+        key = key.replace(" ", "").lower()
+        answer = group[2]
+        probs = result_map[key]
+        dur_probs = probs[0:9]
+        accu = [0.0] * 9
+        for ii in range(0, 9):
+            for jj in range(ii, 9):
+                accu[ii] += probs[9+jj]
+        for ii in range(0, 9):
+            dur_probs[ii] *= accu[ii]
+        time_of_day = 0.0
+        time_of_week = 0.0
+        month = 0.0
+        season = 0.0
+        for ii in range(18, len(probs)):
+            if ii < 26:
+                time_of_day += probs[ii]
+            elif ii < 33:
+                time_of_week += probs[ii]
+            elif ii < 45:
+                month += probs[ii]
+            else:
+                season += probs[ii]
+        # print(", ".join([str(x) for x in [time_of_day, time_of_week, month, season]]))
+        # for ii in range(0, 9):
+        #     dur_probs[ii] += probs[9 + ii]
+
+        # print(probs[0:9])
+        # print(probs[9:18])
+        # print(probs[18:])
+        # print()
+
+
+        parsed_label = decide_duration(answer, tokenizer, single_mode=True)
+        if parsed_label is None:
+            out_labels.append("no")
+        else:
+            if dur_probs[parsed_label] > threshold:
+                out_labels.append("yes")
+            else:
+                out_labels.append("no")
+
+    return evaluator.print_result(None, out_labels)
+    # f_out = open("samples/unsupervised_mctaco/results.txt", "w")
+    # for o in out_labels:
+    #     f_out.write(o + "\n")
+
+
+# calculate_duration_performance(0.11)
+max_acc = 0.0
+t = 0.0
+for i in range(0, 100):
+    threshold = 0.005 * float(i)
+    perf = calculate_duration_performance(threshold)
+    if perf > max_acc:
+        max_acc = perf
+        t = threshold
+print(max_acc)
+print(t)
+

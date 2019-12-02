@@ -112,17 +112,13 @@ class TemporalVerbProcessor(DataProcessor):
         for i in range(0, len(lines)):
             guid = "%s-%s" % (set_type, i)
             if len(lines[i].split()) < 5:
-                continue
-            tokens = lines[i].split()
-            for it in range(0, len(tokens), 100):
-                combine_str = " ".join(tokens)[it:it+100]
-                if "[[" not in combine_str and "{{" not in combine_str:
-                    continue
-                examples.append(
-                    InputExample(
-                        guid=guid, text=" ".join(tokens)[it:it+100]
-                    )
+                pass
+                # continue
+            examples.append(
+                InputExample(
+                    guid=guid, text=lines[i]
                 )
+            )
 
         return examples
 
@@ -164,7 +160,14 @@ def convert_examples_to_features(examples, max_seq_length, tokenizer):
             elif i in end_ids:
                 lm_labels.append(2)
             else:
-                lm_labels.append(0)
+                set_flag = False
+                for j in range(max(0, i - 3), min(len(tokens), i + 3)):
+                    if j in start_ids or j in end_ids:
+                        lm_labels.append(0)
+                        set_flag = True
+                        break
+                if not set_flag:
+                    lm_labels.append(-1)
 
         if len(tokens) > max_seq_length:
             # Never delete any token
@@ -175,9 +178,10 @@ def convert_examples_to_features(examples, max_seq_length, tokenizer):
         segment_ids = [0] * max_seq_length
         padding = [0] * (max_seq_length - len(input_ids))
 
+        assert(len(input_ids) == len(lm_labels))
         input_ids += padding
         input_mask += padding
-        lm_labels += [-1] * (max_seq_length - len(input_ids))
+        lm_labels += [-1] * (max_seq_length - len(lm_labels))
 
         assert len(input_ids) == max_seq_length
         assert len(input_mask) == max_seq_length
@@ -186,6 +190,7 @@ def convert_examples_to_features(examples, max_seq_length, tokenizer):
 
         if ex_index < 100:
             logger.info("*** Example ***")
+            logger.info("text: %s" % example.text)
             logger.info("tokens: %s" % " ".join(
                 [str(x) for x in tokens]))
             logger.info("LM label: %s" % " ".join(str(x) for x in lm_labels))
@@ -239,43 +244,62 @@ def soft_cross_entropy_loss(logits, soft_indices, soft_values, lm_loss):
         return mean_loss.item()
 
 
+# def compute_distance(logits, target):
+#     correct_map = [0.0] * 4
+#     labeled_map = [0.0] * 4
+#     predicted_map = [0.0] * 4
+#     for i in range(0, logits.shape[0]):
+#         for j in range(0, logits.shape[1]):
+#             label_id = int(target[i][j])
+#             predicted_relative_label_id = int(np.argmax(np.array(logits[i][j])))
+#             if label_id < 0:
+#                 continue
+#             if label_id == predicted_relative_label_id:
+#                 correct_map[label_id] += 1.0
+#             labeled_map[label_id] += 1.0
+#             predicted_map[predicted_relative_label_id] += 1.0
+#
+#     return correct_map, labeled_map, predicted_map
+
+def softmax(a):
+    s = 0.0
+    aa = [math.exp(x) for x in a]
+    for aaa in aa:
+        s += aaa
+    ret = [x / s for x in aa]
+    return ret
+
+
 def compute_distance(logits, target):
-    vocab_indices = {
-        0: [1, 2, 3, 4, 5, 6, 7, 8, 9],
-        1: [10, 11, 12, 13, 14, 15, 16, 17],
-        2: [18, 19, 20, 21, 22, 23, 24],
-        3: [25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36],
-        4: [37, 38, 39, 40],
-        5: [41, 42],
-        6: [43, 44, 45, 46, 47, 48, 49, 50, 51],
-        7: [52, 53, 54, 55, 56, 57, 58, 59, 60],
-    }
-    reverse_map = {}
-    index_map = {}
-    avg_dist_map = {}
-    count_map = {}
-    for i in vocab_indices:
-        for j, idx in enumerate(vocab_indices[i]):
-            reverse_map[idx] = i
-            index_map[idx] = j
+    correct_map = [0.0] * 2
+    labeled_map = [0.0] * 2
+    predicted_map = [0.0] * 2
+    left_boundary_scores = []
+    right_boundary_scores = []
     for i in range(0, logits.shape[0]):
-        label_id = int(np.argmax(target[i]))
-        if label_id not in reverse_map:
-            continue
-        group_index = reverse_map[label_id]
+        ls_current = []
+        rs_current = []
+        for j in range(0, logits.shape[1]):
+            label_id = int(target[i][j])
+            predicted_relative_label_id = int(np.argmax(np.array(logits[i][j])))
+            if label_id < 0:
+                pass
+                # continue
+            if label_id > 0:
+                label_id = 1
+            if predicted_relative_label_id > 0:
+                predicted_relative_label_id = 1
+            if label_id == predicted_relative_label_id:
+                correct_map[label_id] += 1.0
+            labeled_map[label_id] += 1.0
+            predicted_map[predicted_relative_label_id] += 1.0
+            soft_maxed = softmax(list(logits[i][j]))
+            ls_current.append(soft_maxed[1] + soft_maxed[3])
+            rs_current.append(soft_maxed[2] + soft_maxed[3])
+        left_boundary_scores.append(ls_current)
+        right_boundary_scores.append(rs_current)
 
-        scores_in_order = []
-        for gi in vocab_indices[group_index]:
-            scores_in_order.append(logits[i][gi])
-        predicted_relative_label_id = int(np.argmax(np.array(scores_in_order)))
-        dist = float(abs(index_map[label_id] - predicted_relative_label_id))
-        if group_index not in avg_dist_map:
-            avg_dist_map[group_index] = 0.0
-            count_map[group_index] = 0.0
-        avg_dist_map[group_index] += dist
-        count_map[group_index] += 1.0
-
-    return avg_dist_map, count_map
+    return correct_map, labeled_map, predicted_map, left_boundary_scores, right_boundary_scores
 
 
 def main():
@@ -596,7 +620,7 @@ def main():
 
         # Load a trained model and config that you have fine-tuned
         config = BertConfig(output_config_file)
-        model = BertBoundary(config)
+        model = BertBoundary(config, num_labels=4)
         model.load_state_dict(torch.load(output_model_file))
     else:
         model = BertBoundary.from_pretrained(args.bert_model)
@@ -614,13 +638,9 @@ def main():
         all_input_mask = torch.tensor([f.input_mask for f in eval_features], dtype=torch.long)
         all_segment_ids = torch.tensor([f.segment_ids for f in eval_features], dtype=torch.long)
         all_lm_labels = torch.tensor([f.lm_labels for f in eval_features], dtype=torch.long)
-        all_target_idxs = torch.tensor([f.target_idx for f in eval_features], dtype=torch.long)
-        all_soft_label_indices = torch.tensor([f.soft_label_indices for f in eval_features], dtype=torch.long)
-        all_soft_label_values = torch.tensor([f.soft_label_values for f in eval_features], dtype=torch.float)
 
         eval_data = TensorDataset(
             all_input_ids, all_input_mask, all_segment_ids, all_lm_labels,
-            all_target_idxs, all_soft_label_indices, all_soft_label_values,
         )
 
         # Run prediction for full data
@@ -630,46 +650,51 @@ def main():
         model.eval()
 
         output_file = os.path.join(args.output_dir, "bert_logits.txt")
+        out_token_files = os.path.join(args.output_dir, "bert_outputs.txt")
         f_out = open(output_file, "w")
-        total_loss = []
-        lm_total_loss = []
+        f_out_token = open(out_token_files, "w")
         prediction_distance = []
         for batch in tqdm(eval_dataloader, desc="Evaluating"):
             batch = tuple(t.to(device) for t in batch)
-            input_ids, input_mask, segment_ids, lm_labels, target_ids, soft_label_indices, soft_label_values = batch
+            input_ids, input_mask, segment_ids, lm_labels = batch
 
             with torch.no_grad():
-                lm_loss, cls = model(
-                    input_ids, segment_ids, input_mask, lm_labels, target_ids
+                logits = model(
+                    input_ids, segment_ids, input_mask
                 )
-                cls = cls.view(-1, 30522)
-                avg_loss = soft_cross_entropy_loss(cls, soft_label_indices, soft_label_values, None)
-                soft_target = torch.zeros(cls.size(0), cls.size(1)).cuda()
-                for x in range(soft_target.size(0)):
-                    soft_target[x, soft_label_indices[x]] = soft_label_values[x]
+                logits = logits.view(-1, 128, 4)
+            lm_labels = lm_labels.view(-1, 128, 1)
 
-            prediction_distance.append(compute_distance(cls.cpu().numpy(), soft_target.cpu().numpy()))
-            lm_total_loss.append(lm_loss.item())
-            total_loss.append(avg_loss)
+            ct, lt, pt, ls, rs = compute_distance(logits.cpu().numpy(), lm_labels.cpu().numpy())
+            input_ids_alpha = input_ids.view(-1, 128).cpu().numpy()
+            for i in range(0, input_ids_alpha.shape[0]):
+                input_ids_current = input_ids_alpha[i]
+                tokens_current = tokenizer.convert_ids_to_tokens(input_ids_current)
+                ls_current = ls[i]
+                rs_current = rs[i]
+                assert len(ls_current) == 128
+                assert len(rs_current) == 128
+                for ii, t in enumerate(tokens_current):
+                    if t == '[PAD]':
+                        f_out_token.write("\n")
+                        break
+                    f_out_token.write(t + "\t" + str(ls_current[ii]) + "\t" + str(rs_current[ii]) + "\n")
 
-        f_out.write("Temporal Loss\n")
-        f_out.write(str(np.mean(np.array(total_loss))) + "\n")
-        f_out.write("LM Loss\n")
-        f_out.write(str(np.mean(np.array(lm_total_loss))) + "\n")
+            prediction_distance.append((ct, lt, pt))
+
         f_out.write("Label Distance\n")
-        mm_total = {}
-        mm_count = {}
-        for mmt, mmc in prediction_distance:
-            for key in mmt:
-                if key not in mm_total:
-                    mm_total[key] = 0.0
-                    mm_count[key] = 0.0
-                mm_total[key] += mmt[key]
-                mm_count[key] += mmc[key]
-        for key in mm_total:
-            mm_total[key] /= mm_count[key]
+        ct = [0.0] * 4
+        lt = [0.0] * 4
+        pt = [0.0] * 4
+        for c, l, p in prediction_distance:
+            for k in range(0, 2):
+                ct[k] += c[k]
+                lt[k] += l[k]
+                pt[k] += p[k]
 
-        f_out.write(str(mm_total) + "\n")
+        f_out.write(str(ct) + "\n")
+        f_out.write(str(lt) + "\n")
+        f_out.write(str(pt) + "\n")
 
 
 if __name__ == "__main__":

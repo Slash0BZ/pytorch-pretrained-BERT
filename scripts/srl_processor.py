@@ -47,17 +47,19 @@ class AllenSRL:
                 if input_size > 3000:
                     continue
             input_maps.append(input_map)
-        print(len(input_maps))
         write_accumulate = 0
         finished_batch = []
+        total_lines_wrote = 0
         for input_map in input_maps:
             prediction = self.predictor.predict_batch_json(input_map)
+            total_lines_wrote += len(input_map)
             finished_batch.append(prediction)
             write_accumulate += 1
             if write_accumulate == 50:
                 for f in finished_batch:
                     f_out.write(f)
                 print("Average Time: " + str((time.time() - start_time) / (50.0 * float(batch_size))))
+                print("Total Sentences Processed: " + str(total_lines_wrote))
                 start_time = time.time()
                 write_accumulate = 0
                 finished_batch = []
@@ -112,20 +114,20 @@ def produce_rest_files():
             to_process.append(line)
         if i % 1000000 == 0:
             print("processed " + str(i) + " lines")
-    f_out = open("samples/gigaword/raw_collection_to_srl.txt", "w")
+    f_out = open("samples/gigaword/raw_collection_additional_to_srl.txt", "w")
     for line in list(set(to_process)):
         f_out.write(line + "\n")
 
 
-produce_rest_files()
+# produce_rest_files()
 
 
-# if __name__ == "__main__":
-#     parser = argparse.ArgumentParser()
-#     parser.add_argument("input", help="INPUT FILE")
-#     parser.add_argument("output", help="OUTPUT FILE")
-#     args = parser.parse_args()
-#
-#     srl = AllenSRL(args.output)
-#     srl.predict_file(args.input)
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("input", help="INPUT FILE")
+    parser.add_argument("output", help="OUTPUT FILE")
+    args = parser.parse_args()
+
+    srl = AllenSRL(args.output)
+    srl.predict_file(args.input)
 

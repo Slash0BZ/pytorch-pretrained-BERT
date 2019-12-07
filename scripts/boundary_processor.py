@@ -55,7 +55,7 @@ def check_for_missing():
 
 
 def fill_missing():
-    have_lines = [x.strip() for x in open("samples/boundary_results/conll_boundary.txt").readlines()]
+    have_lines = [x.strip() for x in open("samples/boundary_results/ontonotes_boundary_test.txt").readlines()]
     cur_sent = []
     all_sents = []
     for hl in have_lines:
@@ -68,7 +68,7 @@ def fill_missing():
     if len(cur_sent) > 0:
         all_sents.append(cur_sent)
 
-    gold_lines = [x.strip() for x in open("/Users/xuanyuzhou/Downloads/CLM_Conll_dev.out").readlines()]
+    gold_lines = [x.strip() for x in open("/Users/xuanyuzhou/Downloads/CLM_On.out").readlines()]
     all_gold_sents = []
     cur_sent = []
     for hl in gold_lines:
@@ -90,7 +90,7 @@ def fill_missing():
             insert_map[i] = [x.split("\t")[0] + "\t" + str(0.0) + "\t" + str(0.0) for x in all_gold_sents[i+additions]]
             additions += 1
 
-    f_out = open("samples/boundary_results/conll_boundary_fixed.txt", "w")
+    f_out = open("samples/boundary_results/conll_boundary_test_fixed.txt", "w")
     for i in range(0, len(all_sents)):
         if i in insert_map:
             for l in insert_map[i]:
@@ -102,7 +102,7 @@ def fill_missing():
         f_out.write("\n")
 
 
-transform_boundary_file("samples/boundary_results/conll.raw.txt", "samples/boundary_results/conll_boundary.txt")
-transform_boundary_file("samples/boundary_results/ontonotes.raw.txt", "samples/boundary_results/ontonotes_boundary.txt")
+# transform_boundary_file("samples/boundary_results/ontonotes.test.raw.txt", "samples/boundary_results/ontonotes_boundary_test.txt")
+# transform_boundary_file("samples/boundary_results/ontonotes.raw.txt", "samples/boundary_results/ontonotes_boundary.txt")
 # check_for_missing()
 fill_missing()

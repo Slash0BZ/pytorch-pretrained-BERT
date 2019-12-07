@@ -8,5 +8,5 @@ def search_by_keywords(lines, keywords):
         if status:
             print(line)
 
-lines = [x.strip() for x in open("samples/gigaword/tmp_seq_fixed/train.formatted.txt").readlines()]
-search_by_keywords(lines, ["[unused500]", "[unused57]"])
+lines = [x.strip() for x in open("samples/gigaword/raw_collection_contextsent_tokenized.txt").readlines()]
+search_by_keywords(lines, ["i am running for republican leader because we did n't just lose our majority"])

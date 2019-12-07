@@ -27,8 +27,17 @@ class McTacoEvaluator:
         type_map = {}
         context_map = {}
         answer_map = {}
+        q_index_map = {}
+        q_content_map = {}
         for i, line in enumerate(ref_lines):
+            # q_index = int(line.split("\t")[0])
+            q_index = 0
+            # line = "\t".join(line.split("\t")[1:])
             key = " ".join(line.split("\t")[0:2])
+            q_index_map[key] = q_index
+            if q_index not in q_content_map:
+                q_content_map[q_index] = []
+            q_content_map[q_index].append(key)
             sentence = line.split("\t")[0]
             question = line.split("\t")[1]
             answer = line.split("\t")[2]
@@ -51,11 +60,18 @@ class McTacoEvaluator:
                 gold_count_map[key] += 1.0
             result_map[key].append(prediction == label)
 
+        # for key in q_content_map:
+        #     for i in range(0, len(q_content_map[key])):
+        #         for j in range(i, len(q_content_map[key])):
+        #             if q_content_map[key][i] != q_content_map[key][j]:
+        #                 print(key)
+
         total = 0.0
         correct = 0.0
         f1 = 0.0
         type_correct = {}
         type_total = {}
+        index_perf_map = {}
         for question in result_map:
             val = True
             total += 1.0
@@ -68,15 +84,13 @@ class McTacoEvaluator:
                 val = val and v
                 if v and prediction_map[question][i] == "yes":
                     cur_correct += 1.0
+            q_index = q_index_map[question]
             if val:
                 correct += 1.0
                 type_correct[type] += 1.0
-            # else:
-            #     if type == "Event Duration":
-            #         print(context_map[question])
-            #         for i in range(0, len(answer_map[question])):
-            #             print(answer_map[question][i] + "\t" + prediction_map[question][i] + "\t" + str(result_map[question][i]))
-            #         print()
+                index_perf_map[q_index] = True
+            else:
+                index_perf_map[q_index] = False
             type_total[type] += 1.0
             p = 1.0
             if prediction_count_map[question] > 0.0:
@@ -87,11 +101,12 @@ class McTacoEvaluator:
             if p + r > 0.0:
                 f1 += 2 * p * r / (p + r)
 
-        # print("Strict Acc.: " + str(correct / total))
-        # print("Avg F1: " + str(f1 / total))
-        # for type in type_total:
-        #     print(type + " EM: " + str(type_correct[type] / type_total[type]))
-        #     pass
+        # print(total)
+        print("Strict Acc.: " + str(correct / total))
+        print("Avg F1: " + str(f1 / total))
+        for type in type_total:
+            print(type + " EM: " + str(type_correct[type] / type_total[type]))
+            pass
 
         if self.output:
             print("Writing results to file: %s" % self.output)

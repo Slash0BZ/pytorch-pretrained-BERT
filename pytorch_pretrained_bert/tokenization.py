@@ -128,7 +128,8 @@ class BertTokenizer(object):
         if ret_boundary:
             return split_tokens, token_start_ids, token_end_ids
         else:
-            return self.basic_tokenizer.tokenize(text)
+            return split_tokens
+            # return self.basic_tokenizer.tokenize(text)
 
     def convert_tokens_to_ids(self, tokens):
         """Converts a sequence of tokens into ids using the vocab."""
@@ -402,7 +403,7 @@ def _is_punctuation(char):
     # Characters such as "^", "$", and "`" are not in the Unicode
     # Punctuation class but we treat them as punctuation anyways, for
     # consistency.
-    return False
+    # return False
     # if char in ["[", "]", "{", "}"]:
     #     return False
     if ((cp >= 33 and cp <= 47) or (cp >= 58 and cp <= 64) or

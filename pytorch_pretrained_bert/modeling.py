@@ -1426,6 +1426,23 @@ class TemporalModelArguments(BertPreTrainedModel):
         return masked_lm_loss, ret_cls
 
 
+class TargetLMPrediction(BertPreTrainedModel):
+    def __init__(self, config):
+        super(TargetLMPrediction, self).__init__(config)
+        self.bert = BertModel(config)
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+
+        self.cls = BertOnlyMLMHead(config, self.bert.embeddings.word_embeddings.weight)
+        self.apply(self.init_bert_weights)
+
+    def forward(self, input_ids, token_type_ids, attention_mask, target_ids):
+        sequence_output, pooled_output = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False)
+        prediction_scores = self.cls(sequence_output)
+        ret_cls = prediction_scores.gather(1, target_ids.view(-1, 1).unsqueeze(2).repeat(1, 1, prediction_scores.size(2)))
+
+        return ret_cls
+
+
 class TemporalModelJointWithLikelihood(BertPreTrainedModel):
 
     def __init__(self, config, num_labels, num_typical_labels):

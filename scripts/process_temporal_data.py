@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 from allennlp import predictors
 from allennlp.predictors import Predictor
 from allennlp.models.archival import load_archive
+from pytorch_pretrained_bert.tokenization import BertTokenizer, BasicTokenizer
 
 
 class GigawordDocument:
@@ -1635,6 +1636,43 @@ class VerbBaseline:
 
             f_out.write(" ".join(tokens) + "\t" + phrase_1 + "\t" + phrase_2 + "\n")
 
+    def word_piece_tokenize(self, tokens, verb_pos, tokenizer):
+        if verb_pos < 0:
+            return None, -1
+
+        ret_tokens = []
+        ret_verb_pos = -1
+        for i, token in enumerate(tokens):
+            if i == verb_pos:
+                ret_verb_pos = len(ret_tokens)
+                ret_tokens.append(token)
+                continue
+            sub_tokens = tokenizer.tokenize(token)
+            ret_tokens.extend(sub_tokens)
+
+        return ret_tokens, ret_verb_pos
+
+    def prepare_annotation_seq(self):
+        import math
+        lines = [x.strip() for x in open("samples/duration/timebank_filtered.txt").readlines()]
+        f_out = open("samples/intrinsic/timebank_all.txt", "w")
+
+        tokenizer = BertTokenizer.from_pretrained("bert-base-uncased", do_lower_case=True, do_basic_tokenize=False)
+        for line in lines:
+            groups = line.split("\t")
+            tokens = groups[0].lower().split()
+            verb_pos = int(groups[1])
+            lower_val = self.get_seconds(groups[2])
+            upper_val = self.get_seconds(groups[3])
+            lower_e = math.log(lower_val)
+            upper_e = math.log(upper_val)
+            if (lower_e + upper_e) / 2.0 >= 11.3666:
+                label = "1"
+            else:
+                label = "0"
+            tokens, verb_pos = self.word_piece_tokenize(tokens, verb_pos, tokenizer)
+            f_out.write(" ".join(tokens) + '\t' + str(verb_pos) + "\t[unused520]\t0\t" + label + "\n")
+
     def prepare_pair_annotation(self):
         import math
         lines = [x.strip() for x in open("samples/duration/timebank_svo_verbonly_strict.txt").readlines()]
@@ -2028,7 +2066,7 @@ if __name__ == "__main__":
     # srl = AllenSRL()
     # srl.predict_file("samples/duration_afp_eng_filtered.txt")
 
-    # runner = SRLRunner()
+    runner = SRLRunner()
     # runner.eval_temporal()
     # runner.count_label("samples/duration/verb_formatted_all_svo.txt")
     # runner.prepare_timebank_srl()
@@ -2051,7 +2089,8 @@ if __name__ == "__main__":
     # extractor.get_rid_of_masks("samples/duration/verb_formatted_all_svo_better_filter_4.txt", "samples/duration/verb_formatted_all_svo_better_filter_4.txt")
     # extractor.get_rid_of_masks("samples/duration/all/nominals_formatted.txt", "samples/duration/all/nominals_formatted_train.txt")
 
-    # baseline = VerbBaseline("samples/duration/all/verbs.txt")
+    baseline = VerbBaseline("samples/duration/all/verbs.txt")
+    baseline.prepare_annotation_seq()
     # baseline.find_distribution_raw()
     # baseline.process("samples/duration/all/nearest_verb_cont/partition_")
     # VerbBaseline.merge_map("samples/duration/all/nearest_verb_all/partition_", "samples/duration/all/nearest_verb.pkl")
@@ -2066,12 +2105,12 @@ if __name__ == "__main__":
     # baseline.find_distribution()
     # baseline.test_file("samples/duration/all/nearest_verb.pkl", "samples/duration/timebank_formatted.txt")
 
-    verbphysics = VerbPhysicsEval()
+    # verbphysics = VerbPhysicsEval()
     # verbphysics.process_raw_file([
     #     "samples/vp_clean/reannotations/train.csv",
     #     "samples/vp_clean/reannotations/test.csv",
     #     "samples/vp_clean/reannotations/dev.csv"], "samples/vp_clean/reannotations/obj_file_20v.txt")
-    verbphysics.process_embedding_file("samples/vp_clean/reannotations/obj_file_20v.txt", "bert_vp_eval/bert_logits.txt")
+    # verbphysics.process_embedding_file("samples/vp_clean/reannotations/obj_file_20v.txt", "bert_vp_eval/bert_logits.txt")
     # verbphysics.process_raw_file([
     #     "samples/verbphysics/train-5/train.csv",
     #     "samples/verbphysics/train-5/test.csv",

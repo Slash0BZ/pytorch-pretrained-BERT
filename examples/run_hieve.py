@@ -122,8 +122,8 @@ class TemporalVerbProcessor(DataProcessor):
             text_tokens = text.split()
             target_idx_a = int(groups[1]) + 1
             target_idx_b = int(groups[3]) + 2 + len(groups[0].split())
-            text_tokens.insert(target_idx_a, "[unused500]")
-            text_tokens.insert(target_idx_b + 1, "[unused500]")
+            text_tokens.insert(target_idx_a, "[unused510]")
+            text_tokens.insert(target_idx_b + 1, "[unused510]")
             text = " ".join(text_tokens)
             target_idx_a = 0
             target_idx_b = 0

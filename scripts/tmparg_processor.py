@@ -239,7 +239,7 @@ class AdditionalPatternProcessor:
 class TmpArgProcessor:
 
     def __init__(self):
-        self.output_path = "samples/gigaword/tmparg_collection_with_prev_and_next_additional.txt"
+        self.output_path = "samples/gigaword/tmparg_collection_realnews.txt"
         self.f_out = open(self.output_path, "w")
         self.root_path = "samples/gigaword"
         self.context_table = {}
@@ -247,14 +247,14 @@ class TmpArgProcessor:
         self.process()
 
     def build_context_table(self):
-        lines = [x.strip() for x in open("samples/gigaword/raw_collection_additional_tokenized.txt").readlines()]
+        lines = [x.strip() for x in open("samples/gigaword/raw_collection_realnews_tokenized.txt").readlines()]
         print("Loaded all lines")
         for i, line in enumerate(lines):
             if i % 1000000 == 0:
                 print("Added " + str(i) + " sentences to context table.")
-            key = line.split("\t")[1].replace(" ", "")
             if len(line.split("\t")) < 3:
                 continue
+            key = line.split("\t")[1].replace(" ", "")
             self.context_table[key] = (line.split("\t")[0], line.split("\t")[2])
         print("Finished building context table")
 
@@ -319,14 +319,15 @@ class TmpArgProcessor:
     def process(self):
         for dirName, subdirList, fileList in os.walk(self.root_path):
             for fname in fileList:
-                if fname.startswith("srl_additional"):
+                if fname.startswith("srl_realnews"):
                     self.process_single_file(self.root_path + "/" + fname)
                     print("Finished " + fname)
 
 
 class TmpArgDimensionFilter:
     def __init__(self):
-        self.file_path = "samples/gigaword/tmparg_collection_all.txt"
+        # self.file_path = "samples/gigaword/tmparg_collection_all.txt"
+        self.file_path = "samples/gigaword/tmparg_collection_realnews.txt"
         ## Required
         self.lines = list(set([x.strip() for x in open(self.file_path).readlines()]))
         # self.rand_file_path = "samples/gigaword/raw_collection_additional_tokenized.txt"
@@ -466,7 +467,7 @@ class TmpArgDimensionFilter:
         for t in tmparg_tokens:
             if self.order_number_convert(t) > 0.0:
                 return "FOUND_UNIT_BUT_NOT_DURATION"
-        if tmparg_tokens[0] in ["for", "over"] and "second time" not in " ".join(tmparg_tokens) and "for the second" not in " ".join(tmparg_tokens):
+        if tmparg_tokens[0] in ["for"] and "second time" not in " ".join(tmparg_tokens) and "for the second" not in " ".join(tmparg_tokens):
             return ret_str
         return "FOUND_UNIT_BUT_NOT_DURATION"
 
@@ -919,10 +920,26 @@ class TmpArgDimensionFilter:
 
         return vocab_indices[label_group] + pad_vec, soft_labels + [0.0] * pad_size, tokenizer.ids_to_tokens[label_vocab_id], tokenizer.convert_ids_to_tokens(vocab_indices[label_group])
 
+    def word_piece_tokenize(self, tokens, verb_pos, tokenizer):
+        if verb_pos < 0:
+            return None, -1
+
+        ret_tokens = []
+        ret_verb_pos = -1
+        for i, token in enumerate(tokens):
+            if i == verb_pos:
+                ret_verb_pos = len(ret_tokens)
+                ret_tokens.append(token)
+                continue
+            sub_tokens = tokenizer.tokenize(token)
+            ret_tokens.extend(sub_tokens)
+
+        return ret_tokens, ret_verb_pos
+
     def process_new_forms(self):
         import time
         all_instances_map = {}
-        tokenizer = BertTokenizer.from_pretrained("bert-base-uncased", do_lower_case=True)
+        tokenizer = BertTokenizer.from_pretrained("bert-base-uncased", do_lower_case=True, do_basic_tokenize=False)
         total_lines = float(len(self.lines))
         # lemmatizer = WordNetLemmatizer()
         # nlp = English()
@@ -932,7 +949,7 @@ class TmpArgDimensionFilter:
         cur_i = 0
         for i, line in enumerate(self.lines):
             skip_prob = random.random()
-            # if skip_prob > 0.1:
+            # if skip_prob > 0.0001:
             #     continue
             if i % 10000 == 0 and i > 0:
                 elapsed = time.time() - start_time
@@ -950,6 +967,10 @@ class TmpArgDimensionFilter:
             tmp_start = int(group[4])
             tmp_end = int(group[5])
             verb_no_lemma = tokens_lower[verb_pos]
+
+            """ATTENTION"""
+            # prev_sent = "[UNK]"
+            # next_sent = "[UNK]"
 
             # verb_lemma = lemmatizer.lemmatize(tokens_lower[verb_pos], "v")
             # sysnets = wn.synsets(verb_lemma, pos=wn.VERB)
@@ -980,6 +1001,9 @@ class TmpArgDimensionFilter:
                 no_tmp_token.append(t)
                 if j == verb_pos:
                     new_verb_pos = len(no_tmp_token) - 1
+
+            no_tmp_token, new_verb_pos = self.word_piece_tokenize(no_tmp_token, new_verb_pos, tokenizer)
+
             if new_verb_pos < 0:
                 continue
 
@@ -1229,7 +1253,7 @@ class TmpArgDimensionFilter:
                 all_instances_map[key].append(["BND", sent_string, target_index, soft_label_indices, soft_label_values, mlm_labels])
 
         care_order = ["DUR", "ORD", "FREQ", "BND", "TYP"]
-        f_out = open("samples/gigaword/lm_format_fixed_all.txt", "w")
+        f_out = open("samples/gigaword/lm_format_realnews.txt", "w")
         count_map = {}
         for key in all_instances_map:
             select = None

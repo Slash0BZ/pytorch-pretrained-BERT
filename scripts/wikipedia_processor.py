@@ -6,6 +6,7 @@ from hanziconv import HanziConv
 import time
 import random
 import json
+import jsonlines
 
 
 class GigawordExtractor:
@@ -135,6 +136,34 @@ class GigawordExtractor:
                 f_out.write(p + "\t" + c + "\t" + n + "\n")
                 f_out.flush()
 
+    def process_file(self, file_name, file_out):
+        ret = []
+        f_out = open(file_out, "w")
+        with jsonlines.open(file_name) as reader:
+            for obj in reader:
+                text = obj['text']
+                doc = self.nlp(text)
+                for i, sent in enumerate(doc.sents):
+                    sent = str(sent)
+                    ap = False
+                    for key in self.duration_keys:
+                        if key in sent.lower():
+                            ap = True
+                    for key in self.typ_keys:
+                        if key in sent.lower():
+                            ap = True
+                    if ap:
+                        prev_sent = "NONE"
+                        if i > 0:
+                            prev_sent = str(list(doc.sents)[i - 1])
+                        next_sent = "NONE"
+                        if i < len(list(doc.sents)) - 1:
+                            next_sent = str(list(doc.sents)[i + 1])
+                        ret.append((prev_sent, sent, next_sent))
+        for p, c, n in ret:
+            f_out.write(p + "\t" + c + "\t" + n + "\n")
+            f_out.flush()
+
 
 class WikipediaExtractor:
     def __init__(self):
@@ -254,10 +283,10 @@ class WikipediaExtractor:
 class TokenizationProcessor:
 
     def __init__(self):
-        self.lines = [x.strip() for x in open("samples/gigaword/raw_collection_randsent_contextsent_additional.txt").readlines()]
+        self.lines = [x.strip() for x in open("samples/gigaword/raw_collection_realnews.txt").readlines()]
         self.nlp = English()
         self.nlp.add_pipe(self.nlp.create_pipe('sentencizer'))
-        self.f_out = open("samples/gigaword/raw_collection_additional_tokenized.txt", "w")
+        self.f_out = open("samples/gigaword/raw_collection_realnews_tokenized.txt", "w")
         self.process()
 
     def process(self):
@@ -313,7 +342,7 @@ class MultiLingualLinker:
         }
         self.nlp = English()
         self.nlp.add_pipe(self.nlp.create_pipe('sentencizer'))
-        self.build_outputs(['fr', 'de', 'ja', 'zh'])
+        self.build_outputs(['en', 'fr', 'de', 'ja', 'zh'])
 
     def build_idmap(self, langs):
         for lang in langs:
@@ -349,6 +378,8 @@ class MultiLingualLinker:
                                 continue
                             all_file_paths.add(s_path + "/" + dir + "/" + file)
             all_file_paths = list(all_file_paths)
+            random.shuffle(all_file_paths)
+            all_file_paths = all_file_paths[:int(0.01 * float(len(all_file_paths)))]
             seen_set = set()
             count = 0
             for i, file_path in enumerate(all_file_paths):
@@ -376,7 +407,7 @@ class MultiLingualLinker:
                         #         continue
                         #     title = self.idmap[lang][title]
                         sub_title = "SHOULD_NEVER_EXIST_IN_LIST"
-                        if lang in ['fr', 'de']:
+                        if lang in ['fr', 'de', 'en']:
                             title = title.lower()
                         if lang in ['zh']:
                             sub_title = title
@@ -409,13 +440,14 @@ class MultiLingualLinker:
 
 
 # extractor = GigawordExtractor()
+# extractor.process_file("samples/gigaword/realnews.txt", "samples/gigaword/raw_collection_realnews.txt")
 # extractor.process_path("samples/gigaword/all", "samples/gigaword/raw_collection_randsent_contextsent_additional.txt")
 # extractor = WikipediaExtractor()
 # extractor.process_path("/shared/wikipedia/processed/enwiki_with_links", "samples/wikipedia/raw_collection_randomsent_contextsent.txt")
-# p = TokenizationProcessor()
+p = TokenizationProcessor()
 # r = Randomizer()
 # m = MultiLingualLinker()
-# m.save("samples/linking/span")
+# m.save("samples/linking/invalid")
 
 def filter_raw():
     lines = [x.strip() for x in open("samples/boundary_data/train.formatted.txt")]

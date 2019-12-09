@@ -211,7 +211,7 @@ def format_lines():
     lines = [x.strip() for x in open("samples/gigaword/to_annotate.txt").readlines()]
     f_out = open("samples/gigaword/to_annotate_formatted.txt", "w")
     count_map = {}
-    total_inst_per_group = 300
+    total_inst_per_group = 10000000
     random.shuffle(lines)
     for line in lines:
         group = line.split("\t")
@@ -612,7 +612,7 @@ def format_model_lines(sentence, dimension, value, verb_pos=None):
 
     seq = "[CLS] " + " ".join(tokens) + " [SEP] [unused500] " + key_tok + " [MASK] [SEP]"
 
-    f_out = open("samples/intrinsic/model.udstmp.txt", "a+")
+    f_out = open("samples/intrinsic/model.dur.txt", "a+")
     candidates = [str(x) for x in candidates]
 
     f_out.write(seq + "\t" + str(len(seq.split()) - 2) + "\t" + str(label) + "\t" + " ".join(candidates) + "\t" + str(dim) + "\n")
@@ -680,31 +680,62 @@ def format_bert_lines(sentence, dimension, value, verb_pos=None):
 
     seq = "[CLS] " + " ".join(new_tokens) + " [SEP]"
 
-    f_out = open("samples/intrinsic/bert.udstmp.txt", "a+")
+    f_out = open("samples/intrinsic/bert.dur.txt", "a+")
     candidates = [str(x) for x in candidates]
 
     f_out.write(seq + "\t" + str(target) + "\t" + str(label) + "\t" + " ".join(candidates) + "\t" + str(dim) + "\n")
 
 
+def format_visualization(sentence, dimension, value, verb_pos=None):
+    sentence = sentence.replace("<font color='red'>", "**##")
+    sentence = sentence.replace("</font>", "")
+
+    if dimension != "typical duration":
+        return
+
+    tokens = sentence.split()
+    if verb_pos is None:
+        verb_pos = -1
+        for i, t in enumerate(tokens):
+            if t.startswith("**##"):
+                verb_pos = i
+                tokens[i] = tokens[i].replace("**##", "")
+                break
+
+    tokenizer = BertTokenizer.from_pretrained("bert-base-uncased", do_lower_case=True, do_basic_tokenize=False)
+    tokens, verb_pos = word_piece_tokenize(tokens, verb_pos, tokenizer)
+
+    f_out = open("samples/intrinsic/test.formatted.txt", "a+")
+
+    f_out.write(" ".join(tokens) + "\t" + str(verb_pos) + "\t[unused520]\t0\t" + str(get_soft_labels(value.split()[1] + "_dur")) + "\n")
+
+
 def filter_lines():
-    lines = [x.strip() for x in open("/Users/xuanyuzhou/Downloads/Batch_3860145_batch_results.csv").readlines()[0:]]
+    # lines = [x.strip() for x in open("/Users/xuanyuzhou/Downloads/realnewsall.csv").readlines()[0:]]
+    lines = [x.strip() for x in open("samples/gigaword/to_annotate_formatted.txt").readlines()[0:]]
 
     sent_map = {}
     for line in lines:
-        group = line[1:-1].split('","')
-        sentence = group[27]
-        likelihood = group[35]
-        dimension = group[29]
+        # group = line[1:-1].split('","')
+        # sentence = group[27]
+        # likelihood = group[35]
+        # dimension = group[29]
+        # label = group[30]
+        # validation = group[34]
+        group = line.split("\t")
+        sentence = group[0]
+        likelihood = "true"
+        validation = "true"
+        dimension = group[2]
+        label = group[3]
         if likelihood == "true":
             likelihood = 1
         else:
             likelihood = 0
-        validation = group[34]
         if validation == "true":
             validation = 1
         else:
             validation = 0
-        label = group[30]
         sentence = sentence + "****" + label
         if "forever" in label or "inst" in label:
             continue
@@ -718,10 +749,13 @@ def filter_lines():
 
     counter = 0
     for sent in sent_map:
-        if sent_map[sent][1] > 0:
+        if sent_map[sent][1] >= 0:
             counter += 1
+            if sent_map[sent][2] != "typical duration" or "day" not in sent_map[sent][3]:
+                continue
             format_model_lines(sent.split("****")[0], sent_map[sent][2], sent_map[sent][3])
             format_bert_lines(sent.split("****")[0], sent_map[sent][2], sent_map[sent][3])
+            # format_visualization(sent.split("****")[0], sent_map[sent][2], sent_map[sent][3])
             print(sent)
             print(sent_map[sent][3])
     print(counter)
@@ -760,8 +794,6 @@ def filter_udst():
         format_model_lines(sentence, dimension, label, verb_pos=verb_pos)
         format_bert_lines(sentence, dimension, label, verb_pos=verb_pos)
 
-
-
 def produce_to_annotate_lines():
     tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
     training_lines = [x.strip() for x in open("samples/gigaword/lm_format_realnews.txt")]
@@ -778,13 +810,89 @@ def produce_to_annotate_lines():
     for key in selection_map:
         instances = selection_map[key]
         random.shuffle(instances)
-        for s, d, v, orig_line in instances[:1000]:
+        for s, d, v, orig_line in instances:
             f_out.write("\t".join([s, d, v, orig_line]) + "\n")
 
 
-filter_lines()
+import math
+from sklearn.manifold import TSNE
+import matplotlib.pyplot as plt
+from sklearn import decomposition
+from matplotlib.backends.backend_pdf import PdfPages
+import seaborn as sns
+import numpy as np
+
+def visualize_distribution():
+    lines = [x.strip() for x in open("score_outputs_e2.txt").readlines()]
+
+    prob_sum = [0.0] * 9
+    for line in lines:
+        scores = [float(x) for x in line.split("\t")]
+        scores = [math.exp(x) for x in scores]
+
+        sum_total = 0.0
+        for s in scores:
+            sum_total += s
+
+        scores = [x / sum_total for x in scores]
+
+        for i in range(0, 9):
+            prob_sum[i] += scores[i]
+
+    prob_sum = [x / float(len(lines)) for x in prob_sum]
+
+    prob_sum_e2 = prob_sum
+
+    lines = [x.strip() for x in open("score_outputs.txt").readlines()]
+
+    prob_sum = [0.0] * 9
+    for line in lines:
+        scores = [float(x) for x in line.split("\t")]
+        scores = [math.exp(x) for x in scores]
+
+        sum_total = 0.0
+        for s in scores:
+            sum_total += s
+
+        scores = [x / sum_total for x in scores]
+
+        for i in range(0, 9):
+            prob_sum[i] += scores[i]
+
+    prob_sum = [x / float(len(lines)) for x in prob_sum]
+
+    y = ["seconds", "minutes", "hours", "days", "weeks", "months", "years", "decades", "centuries"]
+    y_pos = np.arange(len(y))
+    #
+    # simulated_e2 = []
+    #
+    # for i in range(0, 10000):
+    #     r = random.random()
+    #     prev_boundary = 0.0
+    #     next_boundary = 0.0
+    #     for j in range(0, 9):
+    #         next_boundary += prob_sum_e2[j]
+    #         if i > 0:
+    #             prev_boundary += prob_sum_e2[j - 1]
+    #         if prev_boundary < r <= next_boundary:
+    #             simulated_e2.append(j)
+    #             break
+
+
+    plt.plot(prob_sum_e2)
+    plt.plot(prob_sum)
+    # p1 = sns.distplot(simulated_e2, color="r")
+    # p1 = sns.lineplot(prob_sum, y, color="b")
+    plt.xticks(y_pos, y)
+    print("\t".join([str(x) for x in prob_sum_e2]))
+    print("\t".join([str(x) for x in prob_sum]))
+
+
+# format_lines()
+# filter_lines()
 # filter_udst()
 # produce_to_annotate_lines()
+visualize_distribution()
 
 
 

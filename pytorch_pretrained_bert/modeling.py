@@ -1604,7 +1604,8 @@ class BertForSingleTokenClassificationWithPooler(BertPreTrainedModel):
         logits_a_b = torch.cat((logits_a, logits_b), -1)
         logits_rel = self.rel_classifier(torch.cat((comparison_logits_a, comparison_logits_b), -1))
 
-        return torch.cat((logits_a_b, logits_rel), -1), self.compute_lm_loss(cls_a, lm_labels_a) + self.compute_lm_loss(cls_b, lm_labels_b)
+        # return torch.cat((logits_a_b, logits_rel), -1), self.compute_lm_loss(cls_a, lm_labels_a) + self.compute_lm_loss(cls_b, lm_labels_b)
+        return torch.cat((logits_a_b, logits_rel), -1), None
 
 
 class BertForSingleTokenClassificationWithVanilla(BertPreTrainedModel):

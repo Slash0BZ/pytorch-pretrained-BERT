@@ -95,11 +95,12 @@ def eval_joint_pair_data(gold_path, predict_logits):
     for line in gold_lines:
         groups = line.split("\t")
         if groups[-1] != "DUR":
-            continue
+            pass
+            # continue
         if groups[2] == "NONE" or groups[-1] not in ["FREQ", "DUR"]:
             filtered_gold_lines.append(line)
             continue
-        if len(groups[0].split()) > 128 or len(groups[3].split()) > 128:
+        if len(groups[0].split()) > 120 or len(groups[3].split()) > 120:
             continue
         label_a = groups[2].lower()
         label_a_num = float(label_a.split()[0])
@@ -191,8 +192,10 @@ def eval_joint_pair_data(gold_path, predict_logits):
         if key in ["FREQ", "DUR"]:
             print(key)
             print(str(classification_distance[key] / classification_total[key]))
+    print(pair_correct / pair_total)
     print("TYPICAL")
     print(str(typical_correct / typical_total))
 
 
-eval_joint_pair_data("samples/pretrain_combine/test.formatted.txt", "bert_joint_36k_tmp/bert_logits.txt")
+# eval_joint_pair_data("samples/pretrain_combine/test.formatted.txt", "bert_joint_36k_tmp/bert_logits.txt")
+eval_joint_pair_data("samples/conceptnet/test.formatted.txt", "bert_logits.txt")

@@ -102,6 +102,11 @@ class McTacoEvaluator:
                 f1 += 2 * p * r / (p + r)
 
         # print(total)
+        order = ["Event Duration", "Event Ordering", "Stationarity", "Frequency", "Typical Time"]
+        to_print = [str(100.0 * f1 / total), str(100.0 * correct / total)]
+        for o in order:
+            to_print.append(str(100.0 * type_correct[o] / type_total[o]))
+        print("\t".join(to_print))
         print("Strict Acc.: " + str(correct / total))
         print("Avg F1: " + str(f1 / total))
         for type in type_total:

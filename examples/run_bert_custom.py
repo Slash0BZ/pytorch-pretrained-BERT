@@ -238,8 +238,8 @@ class TemporalVerbProcessor(DataProcessor):
 
                 """CHECK HERE"""
                 if label_a == "NONE" or label_b == "NONE":
-                    # pass
-                    continue
+                    pass
+                    # continue
 
                 examples.append(
                     InputExample(
@@ -509,7 +509,7 @@ def soft_cross_entropy_loss(logits, cls_a, cls_b, soft_target_a, adjustment_a, l
     # lm_loss = lm_loss_fn(cls_a.view(-1, 30522), lm_labels_a.view(-1)) + lm_loss_fn(cls_b.view(-1, 30522), lm_labels_b.view(-1))
 
     """CHANGE!!"""
-    return mean_loss + lm_loss, (loss_a.mean() + loss_b.mean()).item(), loss_rel.mean().item()
+    return mean_loss, (loss_a.mean() + loss_b.mean()).item(), loss_rel.mean().item()
 
 
 def cross_entropy_loss(loss, logits, rel_soft_targets):
@@ -1018,9 +1018,9 @@ def main():
 
             w_ready_logits = logits.detach().cpu().numpy()
             for l in w_ready_logits:
-                ll = l[0]
+                # ll = l[0]
                 s = ""
-                for lll in ll:
+                for lll in l:
                     s += str(lll) + "\t"
                 f_out.write(s + "\n")
             nb_eval_steps += 1

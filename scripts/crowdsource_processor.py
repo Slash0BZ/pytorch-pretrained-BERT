@@ -823,11 +823,11 @@ import seaborn as sns
 import numpy as np
 
 def visualize_distribution():
-    lines = [x.strip() for x in open("score_outputs_e2.txt").readlines()]
+    lines = [x.strip() for x in open("score_outputs_freq_vacation.txt").readlines()]
 
-    prob_sum = [0.0] * 9
+    prob_sum = [0.0] * 7
     for line in lines:
-        scores = [float(x) for x in line.split("\t")]
+        scores = [float(x) for x in line.split("\t")][1:-1]
         scores = [math.exp(x) for x in scores]
 
         sum_total = 0.0
@@ -836,18 +836,18 @@ def visualize_distribution():
 
         scores = [x / sum_total for x in scores]
 
-        for i in range(0, 9):
+        for i in range(0, 7):
             prob_sum[i] += scores[i]
 
     prob_sum = [x / float(len(lines)) for x in prob_sum]
 
     prob_sum_e2 = prob_sum
 
-    lines = [x.strip() for x in open("score_outputs.txt").readlines()]
+    lines = [x.strip() for x in open("score_outputs_freq_brake.txt").readlines()]
 
-    prob_sum = [0.0] * 9
+    prob_sum = [0.0] * 7
     for line in lines:
-        scores = [float(x) for x in line.split("\t")]
+        scores = [float(x) for x in line.split("\t")][1:-1]
         scores = [math.exp(x) for x in scores]
 
         sum_total = 0.0
@@ -856,7 +856,7 @@ def visualize_distribution():
 
         scores = [x / sum_total for x in scores]
 
-        for i in range(0, 9):
+        for i in range(0, 7):
             prob_sum[i] += scores[i]
 
     prob_sum = [x / float(len(lines)) for x in prob_sum]

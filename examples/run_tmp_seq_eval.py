@@ -241,10 +241,20 @@ def compute_metrics(task_name, preds, labels, additional=None):
         raise KeyError(task_name)
 
 
+def softmax_custom(a):
+    s = 0.0
+    aa = [math.exp(x) for x in a]
+    for aaa in aa:
+        s += aaa
+    ret = [x / s for x in aa]
+    return ret
+
+
 def compute_distance(logits, target, candidates, dims):
     dist_map = {}
     count_map = {}
     scores_in_order_all = []
+    scores_in_order_all_softmaxed = []
     for i in range(0, logits.shape[0]):
         label_id = int(target[i])
         dim = int(dims[i])
@@ -257,6 +267,7 @@ def compute_distance(logits, target, candidates, dims):
                 break
             scores_in_order.append(logits[i][gi])
         scores_in_order_all.append(scores_in_order)
+        scores_in_order_all_softmaxed.append(softmax_custom(scores_in_order))
         predicted_relative_label_id = int(np.argmax(np.array(scores_in_order)))
         if dim in [0, 1]:
             dist_map[dim] += float(abs(label_id - predicted_relative_label_id))
@@ -271,7 +282,7 @@ def compute_distance(logits, target, candidates, dims):
             dist_map[dim] += min(float(abs(label_id - predicted_relative_label_id)), float(abs(total_label - label_id + predicted_relative_label_id)))
         count_map[dim] += 1.0
 
-    return dist_map, count_map, scores_in_order_all
+    return dist_map, count_map, scores_in_order_all_softmaxed
 
 
 def main():
@@ -545,9 +556,7 @@ def main():
         for key in mm_total:
             mm_total[key] /= mm_count[key]
 
-        print(mm_total)
 
-        f_out = open("tmp_out.txt", "a+")
         ordered_list = []
         for key in range(0, 6):
             if key not in mm_total:

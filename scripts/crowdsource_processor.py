@@ -167,7 +167,7 @@ def parse_line(line, tokenizer):
 
 def produce_lines():
     tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
-    training_lines = [x.strip() for x in open("samples/gigaword/tmp_seq_multi_sent_allmask/train.formatted.txt")]
+    training_lines = [x.strip() for x in open("samples/gigaword/fixnorm/tmp_seq_multi_sent_partial_mask/train.formatted.txt")]
 
     # seen_set = set()
     # for line in training_lines:
@@ -178,7 +178,7 @@ def produce_lines():
 
     seen_count = 0
     selection_map = {}
-    f_out = open("samples/gigaword/tmp_seq_multi_sent_allmask/train.formatted.txt", "w")
+    f_out = open("samples/gigaword/fixnorm/tmp_seq_multi_sent_partial_mask/train.formatted.txt", "w")
     for line in training_lines:
         sentence, dimension, value, orig_line = parse_line(line, tokenizer)
         if dimension not in selection_map:
@@ -208,10 +208,10 @@ def produce_lines():
 
 
 def format_lines():
-    lines = [x.strip() for x in open("samples/gigaword/to_annotate.txt").readlines()]
-    f_out = open("samples/gigaword/to_annotate_formatted.txt", "w")
+    lines = [x.strip() for x in open("samples/gigaword/to_annotate_fix_normalization.txt").readlines()]
+    f_out = open("samples/gigaword/to_annotate_formatted_fix_normalization.txt", "w")
     count_map = {}
-    total_inst_per_group = 10000000
+    total_inst_per_group = 10000
     random.shuffle(lines)
     for line in lines:
         group = line.split("\t")
@@ -612,7 +612,7 @@ def format_model_lines(sentence, dimension, value, verb_pos=None):
 
     seq = "[CLS] " + " ".join(tokens) + " [SEP] [unused500] " + key_tok + " [MASK] [SEP]"
 
-    f_out = open("samples/intrinsic/model.dur.txt", "a+")
+    f_out = open("samples/intrinsic/model.dur.vis.txt", "a+")
     candidates = [str(x) for x in candidates]
 
     f_out.write(seq + "\t" + str(len(seq.split()) - 2) + "\t" + str(label) + "\t" + " ".join(candidates) + "\t" + str(dim) + "\n")
@@ -639,12 +639,12 @@ def format_bert_lines(sentence, dimension, value, verb_pos=None):
     dim = -1
     if dimension == "typical duration":
         key_tok = "for 1"
-        candidates = [2117, 3371, 3198, 2154, 2733, 3204, 2095, 5476, 2301]
+        candidates = [2117, 3371, 3178, 2154, 2733, 3204, 2095, 5476, 2301]
         value = value.split()[1] + "_dur"
         dim = 0
     if dimension == "typical frequency":
         key_tok = "every"
-        candidates = [2117, 3371, 3198, 2154, 2733, 3204, 2095, 5476, 2301]
+        candidates = [2117, 3371, 3178, 2154, 2733, 3204, 2095, 5476, 2301]
         value = value.split()[1] + "_freq"
         dim = 1
     if dimension == "typical occurring time of the day":
@@ -680,7 +680,7 @@ def format_bert_lines(sentence, dimension, value, verb_pos=None):
 
     seq = "[CLS] " + " ".join(new_tokens) + " [SEP]"
 
-    f_out = open("samples/intrinsic/bert.dur.txt", "a+")
+    f_out = open("samples/intrinsic/bert.dur.vis.txt", "a+")
     candidates = [str(x) for x in candidates]
 
     f_out.write(seq + "\t" + str(target) + "\t" + str(label) + "\t" + " ".join(candidates) + "\t" + str(dim) + "\n")
@@ -712,7 +712,7 @@ def format_visualization(sentence, dimension, value, verb_pos=None):
 
 def filter_lines():
     # lines = [x.strip() for x in open("/Users/xuanyuzhou/Downloads/realnewsall.csv").readlines()[0:]]
-    lines = [x.strip() for x in open("samples/gigaword/to_annotate_formatted.txt").readlines()[0:]]
+    lines = [x.strip() for x in open("samples/gigaword/to_annotate_formatted_fix_normalization.txt").readlines()[0:]]
 
     sent_map = {}
     for line in lines:
@@ -751,7 +751,8 @@ def filter_lines():
     for sent in sent_map:
         if sent_map[sent][1] >= 0:
             counter += 1
-            if sent_map[sent][2] != "typical duration" or "day" not in sent_map[sent][3]:
+            # if sent_map[sent][2] != "typical duration" or "day" not in sent_map[sent][3]:
+            if sent_map[sent][2] != "typical duration":
                 continue
             format_model_lines(sent.split("****")[0], sent_map[sent][2], sent_map[sent][3])
             format_bert_lines(sent.split("****")[0], sent_map[sent][2], sent_map[sent][3])
@@ -796,9 +797,9 @@ def filter_udst():
 
 def produce_to_annotate_lines():
     tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
-    training_lines = [x.strip() for x in open("samples/gigaword/lm_format_realnews.txt")]
+    training_lines = [x.strip() for x in open("samples/gigaword/lm_format_fix_normalization.txt")]
     selection_map = {}
-    for line in training_lines:
+    for line in training_lines[:1000000]:
         sentence, dimension, value, orig_line = parse_line(line, tokenizer)
         key = dimension + " " + value
         if key not in selection_map:
@@ -806,7 +807,7 @@ def produce_to_annotate_lines():
 
         selection_map[key].append([sentence, dimension, value, orig_line])
 
-    f_out = open("samples/gigaword/to_annotate.txt", "w")
+    f_out = open("samples/gigaword/to_annotate_fix_normalization.txt", "w")
     for key in selection_map:
         instances = selection_map[key]
         random.shuffle(instances)
@@ -819,7 +820,7 @@ from sklearn.manifold import TSNE
 import matplotlib.pyplot as plt
 from sklearn import decomposition
 from matplotlib.backends.backend_pdf import PdfPages
-import seaborn as sns
+# import seaborn as sns
 import numpy as np
 
 def visualize_distribution():
@@ -888,12 +889,12 @@ def visualize_distribution():
     print("\t".join([str(x) for x in prob_sum]))
 
 
-# format_lines()
-# filter_lines()
-# filter_udst()
 # produce_to_annotate_lines()
-visualize_distribution()
-
+# format_lines()
+filter_lines()
+# filter_udst()
+# visualize_distribution()
+# produce_lines()
 
 
 

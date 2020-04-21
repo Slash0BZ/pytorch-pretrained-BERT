@@ -7,6 +7,7 @@ import copy
 from spacy.lang.en import English
 import re
 import nltk
+import sys
 # nltk.download('wordnet', download_dir="/shared/xzhou45/nltk_data/")
 nltk.data.path.append("/shared/xzhou45/nltk_data/")
 from nltk.corpus import wordnet as wn
@@ -326,14 +327,14 @@ class TmpArgProcessor:
 
 class TmpArgDimensionFilter:
     def __init__(self):
-        # self.file_path = "samples/gigaword/tmparg_collection_all.txt"
-        self.file_path = "samples/gigaword/tmparg_collection_realnews.txt"
+        self.file_path = "samples/gigaword/tmparg_collection_all.txt"
+        # self.file_path = "samples/gigaword/tmparg_collection_realnews.txt"
         ## Required
         self.lines = list(set([x.strip() for x in open(self.file_path).readlines()]))
         # self.rand_file_path = "samples/gigaword/raw_collection_additional_tokenized.txt"
         # self.rand_lines = [x.strip() for x in open(self.rand_file_path).readlines()]
-        self.output_path = "samples/gigaword/twosent_small_lesstyp"
-        self.output_path_singlesent = "samples/gigaword/onesent_small_lesstyp"
+        self.output_path = "samples/gigaword/twosent_fixed_rounding"
+        self.output_path_singlesent = "samples/gigaword/onesent_fixed_rounding"
         self.value_map = {
             "second": 1.0,
             "seconds": 1.0,
@@ -394,9 +395,15 @@ class TmpArgDimensionFilter:
                 return self.get_surface_floats(tokens)
             string_comb = tokens[-1]
             cur = w2n.word_to_num(string_comb)
-            for i in range(-2, -1, -1):
-                if tokens[i] in ["-", "and"] or w2n.word_to_num(tokens[i]) is not None:
-                    string_comb = tokens[i] + " " + string_comb
+            for i in range(-2, max(-(len(tokens)) - 1, -6), -1):
+                status = True
+                try:
+                    _ = w2n.word_to_num(tokens[i])
+                except:
+                    status = False
+                if tokens[i] in ["-", "and"] or status:
+                    if tokens[i] != "-":
+                        string_comb = tokens[i] + " " + string_comb
                     update = w2n.word_to_num(string_comb)
                     if update is not None:
                         cur = update
@@ -404,7 +411,7 @@ class TmpArgDimensionFilter:
                     break
             if cur is not None:
                 return float(cur)
-        except:
+        except Exception as e:
             return None
 
     def order_number_convert(self, input):
@@ -697,7 +704,7 @@ class TmpArgDimensionFilter:
         seconds = convert_map[u] * float(v_input)
         prev_unit = "seconds"
         for i, v in enumerate(convert_map):
-            if seconds / convert_map[v] < 0.1:
+            if seconds / convert_map[v] < 0.5:
                 break
             prev_unit = v
         if prev_unit == "seconds" and seconds > 60.0:
@@ -868,7 +875,7 @@ class TmpArgDimensionFilter:
         label_group = keywords[orig_label][0]
         label_id = keywords[orig_label][1]
         soft_labels = [0.0] * len(vocab_indices[label_group])
-        if label_group == 0:
+        if label_group in [0, 6, 7]:
             label_vector_map = [
                 [0.7412392700826488, 0.24912843928090708, 0.009458406390501939, 0.00016606286478555588,
                  7.30646267660146e-06, 5.120999881870982e-07, 2.807187666675083e-09, 1.1281434169352893e-11,
@@ -1029,8 +1036,8 @@ class TmpArgDimensionFilter:
                         continue
                     prob = random.random()
 
-                    if prob < 0.60:
-                        prob /= 0.60
+                    if prob < 0.15:
+                        prob /= 0.15
 
                         orig_token = prev_two_sents_tokens[it]
                         # 80% randomly change token to mask token
@@ -1253,7 +1260,7 @@ class TmpArgDimensionFilter:
                 all_instances_map[key].append(["BND", sent_string, target_index, soft_label_indices, soft_label_values, mlm_labels])
 
         care_order = ["DUR", "ORD", "FREQ", "BND", "TYP"]
-        f_out = open("samples/gigaword/lm_format_realnews.txt", "w")
+        f_out = open("samples/gigaword/lm_format_fix_normalization_partial_mask.txt", "w")
         count_map = {}
         for key in all_instances_map:
             select = None
